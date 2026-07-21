@@ -183,6 +183,26 @@ def test_earnings_uses_actual_report_date(tmp_path, monkeypatch):
     )
     db.upsert_ohlcv(ohlcv, "TEST", source="unit")
 
+    # Index proxies: flat until the report date, then SPY +1%, DIA +2%, QQQ -1%.
+    for sym, base, after in (
+        ("SPY", 400.0, 404.0),
+        ("DIA", 340.0, 346.8),
+        ("QQQ", 300.0, 297.0),
+    ):
+        px = [base if d < pd.Timestamp("2023-02-01") else after for d in dates]
+        frame = pd.DataFrame(
+            {
+                "date": dates,
+                "open": px,
+                "high": px,
+                "low": px,
+                "close": px,
+                "adj_close": px,
+                "volume": 1_000_000,
+            }
+        )
+        db.upsert_ohlcv(frame, sym, source="unit")
+
     rows = [
         (
             "0000000001",
@@ -250,3 +270,10 @@ def test_earnings_uses_actual_report_date(tmp_path, monkeypatch):
     assert abs(e0["ret_3d"] - 0.1) < 1e-6
     assert abs(e0["ret_5d"] - 0.1) < 1e-6
     assert abs(e0["ret_1m"] - 0.1) < 1e-6
+    # Index proxies moved SPY +1%, DIA +2%, QQQ -1% over the same windows.
+    assert result["benchmarks"] == ["SPY", "DIA", "QQQ"]
+    idx = e0["index_returns"]
+    assert abs(idx["SPY"]["ret_1d"] - 0.01) < 1e-6
+    assert abs(idx["SPY"]["ret_1m"] - 0.01) < 1e-6
+    assert abs(idx["DIA"]["ret_1d"] - 0.02) < 1e-6
+    assert abs(idx["QQQ"]["ret_1d"] - (-0.01)) < 1e-6

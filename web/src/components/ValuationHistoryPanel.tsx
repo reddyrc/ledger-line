@@ -51,14 +51,30 @@ function formatMetric(key: ValuationMetricKey, v: number | null | undefined): st
   return fmtNum(v);
 }
 
+function retClass(v: number | null | undefined): string {
+  if (v == null) return "";
+  return v > 0 ? "pos" : v < 0 ? "neg" : "";
+}
+
+/** Friendly names for the index proxy ETFs used in post-earnings returns. */
+const INDEX_LABELS: Record<string, { label: string; title: string }> = {
+  SPY: { label: "S&P", title: "S&P 500 (SPY)" },
+  DIA: { label: "Dow", title: "Dow Jones Industrial Average (DIA)" },
+  QQQ: { label: "Nasdaq", title: "Nasdaq-100 (QQQ)" },
+};
+
 function EarningsTooltip({
   active,
   payload,
   label,
+  symbol,
+  benchmarks,
 }: {
   active?: boolean;
   payload?: Array<{ payload?: EarningsPoint }>;
   label?: string | number;
+  symbol?: string;
+  benchmarks?: string[];
 }) {
   if (!active || !payload?.length) return null;
   const row = payload[0]?.payload;
@@ -72,6 +88,12 @@ function EarningsTooltip({
     ? `After earnings report (${row.report_date})`
     : "Earnings report date unavailable";
 
+  const indexReturns = row.index_returns ?? {};
+  const indexSyms = (benchmarks ?? Object.keys(indexReturns)).filter((sym) =>
+    POST_EARNINGS_HORIZONS.some((h) => indexReturns[sym]?.[h.key] != null),
+  );
+  const cols = { gridTemplateColumns: `2.4rem repeat(${indexSyms.length + 1}, 1fr)` };
+
   return (
     <div className="earnings-tooltip">
       <div className="earnings-tooltip-head">{bits.join(" · ")}</div>
@@ -80,20 +102,47 @@ function EarningsTooltip({
       </div>
       <div className="earnings-tooltip-sub muted small">{reportNote}</div>
       <div className="earnings-tooltip-returns">
+        {indexSyms.length > 0 && (
+          <div className="earnings-tooltip-row earnings-tooltip-cols" style={cols}>
+            <span />
+            <span className="mono muted">{symbol ?? "Stock"}</span>
+            {indexSyms.map((sym) => (
+              <span
+                key={sym}
+                className="mono muted"
+                title={INDEX_LABELS[sym]?.title ?? sym}
+              >
+                {INDEX_LABELS[sym]?.label ?? sym}
+              </span>
+            ))}
+          </div>
+        )}
         {POST_EARNINGS_HORIZONS.map((h) => {
           const v = row[h.key];
-          const cls =
-            v == null
-              ? ""
-              : v > 0
-                ? "pos"
-                : v < 0
-                  ? "neg"
-                  : "";
+          if (indexSyms.length === 0) {
+            return (
+              <div key={h.key} className="earnings-tooltip-row">
+                <span>{h.label}</span>
+                <span className={`mono ${retClass(v)}`}>{fmtPct(v, 1)}</span>
+              </div>
+            );
+          }
           return (
-            <div key={h.key} className="earnings-tooltip-row">
+            <div
+              key={h.key}
+              className="earnings-tooltip-row earnings-tooltip-cols"
+              style={cols}
+            >
               <span>{h.label}</span>
-              <span className={`mono ${cls}`}>{fmtPct(v, 1)}</span>
+              <span className={`mono ${retClass(v)}`}>{fmtPct(v, 1)}</span>
+              {indexSyms.map((sym) => {
+                const bv = indexReturns[sym]?.[h.key];
+                return (
+                  <span key={sym} className={`mono ${retClass(bv)}`}>
+                    {fmtPct(bv, 1)}
+                  </span>
+                );
+              })}
             </div>
           );
         })}
@@ -350,6 +399,7 @@ export function ValuationHistoryPanel({ data, loading, rangeControls }: Props) {
           <h4>Earnings (EPS)</h4>
           <span className="muted small">
             Diluted EPS · hover a bar for post-earnings returns
+            {(data.benchmarks?.length ?? 0) > 0 ? " (vs S&P, Dow, Nasdaq)" : ""}
           </span>
         </div>
         {earnings.length === 0 ? (
@@ -372,6 +422,7 @@ export function ValuationHistoryPanel({ data, loading, rangeControls }: Props) {
                   ret_3d: e.ret_3d,
                   ret_5d: e.ret_5d,
                   ret_1m: e.ret_1m,
+                  index_returns: e.index_returns,
                 }))}
                 margin={{ top: 8, right: 12, left: 0, bottom: 0 }}
               >
@@ -392,7 +443,12 @@ export function ValuationHistoryPanel({ data, loading, rangeControls }: Props) {
                   tickFormatter={(v: number) => fmtNum(v, 2)}
                 />
                 <Tooltip
-                  content={<EarningsTooltip />}
+                  content={
+                    <EarningsTooltip
+                      symbol={data.symbol}
+                      benchmarks={data.benchmarks}
+                    />
+                  }
                   cursor={{ fill: "color-mix(in srgb, var(--accent-2) 12%, transparent)" }}
                 />
                 <Bar

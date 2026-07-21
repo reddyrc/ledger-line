@@ -13,6 +13,7 @@ import {
 import { useHistory, useOptionsChain, useOptionsContract } from "../api/hooks";
 import type { DateBounds } from "../api/hooks";
 import { IvEarningsChips, TermStructureTable } from "../components/IvEarningsChips";
+import { IvHistoryPanel } from "../components/IvHistoryPanel";
 import { StrategyIdeasPanel } from "../components/StrategyIdeasPanel";
 import type { OptionContract } from "../types/api";
 import { fmtNum, fmtPct, fmtPrice, normalizeTicker } from "../lib/format";
@@ -226,6 +227,11 @@ export function OptionsPage() {
           term={(data?.iv_context ?? summary.iv_context)?.term_structure}
         />
       )}
+
+      <IvHistoryPanel
+        symbol={symbol}
+        expiration={expiration ?? data?.expiration ?? undefined}
+      />
 
       {(data?.uoa?.length ?? 0) > 0 && (
         <div className="panel">

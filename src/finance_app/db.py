@@ -61,6 +61,12 @@ CREATE TABLE IF NOT EXISTS earnings_events (
     PRIMARY KEY (symbol, report_datetime)
 );
 
+CREATE TABLE IF NOT EXISTS earnings_analysis_snapshots (
+    symbol TEXT PRIMARY KEY,
+    payload_json TEXT NOT NULL,
+    fetched_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS short_interest (
     symbol TEXT NOT NULL,
     settlement_date TEXT NOT NULL,
@@ -143,6 +149,7 @@ CREATE TABLE IF NOT EXISTS options_iv_snapshots (
 CREATE INDEX IF NOT EXISTS idx_ohlcv_symbol ON ohlcv(symbol);
 CREATE INDEX IF NOT EXISTS idx_fund_ticker ON fundamentals(ticker);
 CREATE INDEX IF NOT EXISTS idx_earnings_symbol ON earnings_events(symbol);
+CREATE INDEX IF NOT EXISTS idx_earnings_analysis_symbol ON earnings_analysis_snapshots(symbol);
 CREATE INDEX IF NOT EXISTS idx_short_interest_symbol ON short_interest(symbol);
 CREATE INDEX IF NOT EXISTS idx_macro_series ON macro_series(series_id);
 CREATE INDEX IF NOT EXISTS idx_screen_sector ON screen_snapshots(sector);
@@ -749,6 +756,73 @@ def get_options_chain_cache(cache_key: str) -> Optional[dict[str, Any]]:
             "spot": row["spot"],
             "payload": payload,
             "updated_at": datetime.fromisoformat(row["updated_at"]),
+        }
+
+
+def get_latest_options_chain_cache(symbol: str) -> Optional[dict[str, Any]]:
+    """Most recently updated chain cache row for a symbol (any expiration)."""
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT cache_key, symbol, expiration, spot, payload_json, updated_at
+            FROM options_chain_cache
+            WHERE symbol = ?
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (symbol.upper(),),
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            payload = json.loads(row["payload_json"])
+        except json.JSONDecodeError:
+            return None
+        return {
+            "cache_key": row["cache_key"],
+            "symbol": row["symbol"],
+            "expiration": row["expiration"],
+            "spot": row["spot"],
+            "payload": payload,
+            "updated_at": datetime.fromisoformat(row["updated_at"]),
+        }
+
+
+def upsert_earnings_analysis_snapshot(symbol: str, payload: dict[str, Any]) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO earnings_analysis_snapshots(symbol, payload_json, fetched_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(symbol) DO UPDATE SET
+                payload_json=excluded.payload_json,
+                fetched_at=excluded.fetched_at
+            """,
+            (symbol.upper(), json.dumps(payload), now),
+        )
+
+
+def load_earnings_analysis_snapshot(symbol: str) -> Optional[dict[str, Any]]:
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT symbol, payload_json, fetched_at
+            FROM earnings_analysis_snapshots
+            WHERE symbol = ?
+            """,
+            (symbol.upper(),),
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            payload = json.loads(row["payload_json"])
+        except json.JSONDecodeError:
+            return None
+        return {
+            "symbol": row["symbol"],
+            "payload": payload,
+            "fetched_at": row["fetched_at"],
         }
 
 

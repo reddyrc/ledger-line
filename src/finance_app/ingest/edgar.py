@@ -12,7 +12,7 @@ from finance_app.db import upsert_fundamentals
 EDGAR_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 COMPANY_FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
 
-# Prefer these US-GAAP tags when building ratios
+# Prefer these US-GAAP tags when building ratios / statements
 CONCEPT_ALIASES: dict[str, list[str]] = {
     "Revenue": [
         "Revenues",
@@ -23,11 +23,50 @@ CONCEPT_ALIASES: dict[str, list[str]] = {
     "NetIncome": ["NetIncomeLoss"],
     "EPS": ["EarningsPerShareDiluted", "EarningsPerShareBasic"],
     "Assets": ["Assets"],
-    "Equity": ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
+    "CurrentAssets": ["AssetsCurrent"],
+    "Cash": ["CashAndCashEquivalentsAtCarryingValue"],
+    "ShortTermInvestments": [
+        "ShortTermInvestments",
+        "MarketableSecuritiesCurrent",
+        "AvailableForSaleSecuritiesCurrent",
+    ],
+    "AccountsReceivable": [
+        "AccountsReceivableNetCurrent",
+        "AccountsReceivableNet",
+        "ReceivablesNetCurrent",
+    ],
+    "Inventory": ["InventoryNet"],
+    "PropertyPlantEquipment": [
+        "PropertyPlantAndEquipmentNet",
+    ],
+    "Goodwill": ["Goodwill"],
+    "IntangibleAssets": [
+        "IntangibleAssetsNetExcludingGoodwill",
+        "FiniteLivedIntangibleAssetsNet",
+    ],
+    "Equity": [
+        "StockholdersEquity",
+        "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
+    ],
+    "CommonStock": ["CommonStockValue"],
+    "RetainedEarnings": ["RetainedEarningsAccumulatedDeficit"],
     "Liabilities": ["Liabilities"],
+    "CurrentLiabilities": ["LiabilitiesCurrent"],
+    "AccountsPayable": ["AccountsPayableCurrent", "AccountsPayableAndAccruedLiabilitiesCurrent"],
+    "ShortTermDebt": [
+        "ShortTermBorrowings",
+        "LongTermDebtCurrent",
+        "DebtCurrent",
+        "CommercialPaper",
+    ],
+    "LongTermDebt": [
+        "LongTermDebt",
+        "LongTermDebtNoncurrent",
+        "LongTermDebtAndCapitalLeaseObligations",
+        "LongTermDebtNoncurrentAndCapitalLeaseObligations",
+    ],
     "GrossProfit": ["GrossProfit"],
     "OperatingIncome": ["OperatingIncomeLoss"],
-    "Cash": ["CashAndCashEquivalentsAtCarryingValue"],
     "Shares": [
         "WeightedAverageNumberOfDilutedSharesOutstanding",
         "WeightedAverageNumberOfSharesOutstandingDiluted",

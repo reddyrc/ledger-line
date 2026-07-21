@@ -145,7 +145,12 @@ def rolling_metrics_series(
 ) -> list[dict[str, Any]]:
     prices = _price_series(ohlcv)
     rets = daily_returns(prices)
-    roll_vol = rolling_volatility(rets, window=min(window, 21))
+    vol_window = min(window, 21)
+    roll_vol = rolling_volatility(rets, window=vol_window)
+    # Rolling Sharpe using same return window as the API window param
+    roll_mean = rets.rolling(window).mean()
+    roll_std = rets.rolling(window).std(ddof=1)
+    roll_sharpe = (roll_mean / roll_std) * np.sqrt(252)
     cum = (1 + rets).cumprod() - 1
 
     rows = []
@@ -157,6 +162,9 @@ def rolling_metrics_series(
                 "cumulative_return": _nan_to_none(float(cum.loc[dt])),
                 "rolling_vol_ann": _nan_to_none(
                     float(roll_vol.loc[dt]) if dt in roll_vol.index else float("nan")
+                ),
+                "rolling_sharpe": _nan_to_none(
+                    float(roll_sharpe.loc[dt]) if dt in roll_sharpe.index else float("nan")
                 ),
             }
         )

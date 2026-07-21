@@ -73,19 +73,44 @@ export type TechnicalsResponse = {
   error?: string;
 };
 
+export type FundamentalsGrowthPoint = {
+  end_date: string;
+  value: number | null;
+  yoy: number | null;
+  form: string | null;
+};
+
+export type BalanceSheetLine = {
+  key: string;
+  label: string;
+  section: "assets" | "liabilities" | "equity" | string;
+  value: number | null;
+  yoy?: number | null;
+};
+
+export type BalanceSheetHistoryRow = {
+  key: string;
+  label: string;
+  section: "assets" | "liabilities" | "equity" | string;
+  values: Array<number | null>;
+};
+
+export type BalanceSheetPayload = {
+  as_of: string | null;
+  form: string | null;
+  lines: BalanceSheetLine[];
+  history: {
+    periods: string[];
+    rows: BalanceSheetHistoryRow[];
+  };
+};
+
 export type FundamentalsResponse = {
   ticker: string;
   ratios: Record<string, number | null>;
   raw: Record<string, number | null>;
-  growth: Record<
-    string,
-    Array<{
-      end_date: string;
-      value: number | null;
-      yoy: number | null;
-      form: string | null;
-    }>
-  >;
+  growth: Record<string, FundamentalsGrowthPoint[]>;
+  balance_sheet?: BalanceSheetPayload | null;
   disclaimer?: string;
   error?: string;
 };
@@ -138,6 +163,15 @@ export type EarningsPoint = {
   ret_3d?: number | null;
   ret_5d?: number | null;
   ret_1m?: number | null;
+  index_returns?: Record<
+    string,
+    {
+      ret_1d?: number | null;
+      ret_3d?: number | null;
+      ret_5d?: number | null;
+      ret_1m?: number | null;
+    }
+  > | null;
 };
 
 export type ValuationHistoryResponse = {
@@ -153,6 +187,7 @@ export type ValuationHistoryResponse = {
   };
   series: ValuationPoint[];
   earnings: EarningsPoint[];
+  benchmarks?: string[];
   disclaimer?: string;
   error?: string;
 };
@@ -309,6 +344,79 @@ export type UoaRow = {
   vs_median_vol_oi?: number | null;
   day_low?: number | null;
   day_high?: number | null;
+};
+
+export type IvHistoryPoint = {
+  date: string;
+  expiration?: string | null;
+  dte?: number | null;
+  atm_iv: number | null;
+  spot?: number | null;
+  hv_10?: number | null;
+  hv_20?: number | null;
+  hv_30?: number | null;
+  iv_hv_premium?: number | null;
+  call_oi?: number | null;
+  put_oi?: number | null;
+  total_oi?: number | null;
+  call_volume?: number | null;
+  put_volume?: number | null;
+  pcr_oi?: number | null;
+  pcr_volume?: number | null;
+};
+
+export type EarningsCrushEvent = {
+  report_datetime: string;
+  report_date: string;
+  reported_eps?: number | null;
+  eps_estimate?: number | null;
+  surprise_pct?: number | null;
+  pre_close?: number | null;
+  post_close?: number | null;
+  actual_move_pct?: number | null;
+  expected_move?: number | null;
+  expected_move_pct?: number | null;
+  hit_expected?: boolean | null;
+  iv_before?: number | null;
+  iv_after?: number | null;
+  iv_crush?: number | null;
+  iv_before_date?: string | null;
+  iv_after_date?: string | null;
+};
+
+export type IvHistoryResponse = {
+  symbol: string;
+  start: string;
+  end: string;
+  expiration?: string | null;
+  series: IvHistoryPoint[];
+  sample_count: number;
+  building_history?: boolean;
+  latest?: {
+    atm_iv?: number | null;
+    hv_20?: number | null;
+    iv_hv_premium?: number | null;
+    pcr_oi?: number | null;
+    total_oi?: number | null;
+    date?: string | null;
+  };
+  earnings_history?: EarningsCrushEvent[];
+  disclaimer?: string;
+  error?: string;
+};
+
+export type RollingPoint = {
+  date: string;
+  return: number | null;
+  cumulative_return: number | null;
+  rolling_vol_ann: number | null;
+  rolling_sharpe?: number | null;
+};
+
+export type RollingResponse = {
+  symbol: string;
+  window: number;
+  series: RollingPoint[];
 };
 
 export type OptionsSummary = {
@@ -507,6 +615,23 @@ export type EarningsCalendarEvent = {
   eps_estimate: number | null;
   surprise_pct: number | null;
   days_to_earnings: number | null;
+  session?: "BMO" | "AMC" | null;
+  last_surprise_pct?: number | null;
+  spot?: number | null;
+  avg_abs_move_1d?: number | null;
+  avg_move_n?: number | null;
+  revenue_estimate?: number | null;
+  revenue_yoy?: number | null;
+  eps_estimate_avg?: number | null;
+  eps_revisions_up_30d?: number | null;
+  eps_revisions_down_30d?: number | null;
+  eps_revision_net_30d?: number | null;
+  eps_trend_delta_30d?: number | null;
+  atm_iv?: number | null;
+  iv_rank_1y?: number | null;
+  expected_move?: number | null;
+  expected_move_pct?: number | null;
+  avg_iv_crush?: number | null;
 };
 
 export type EarningsCalendarResponse = {

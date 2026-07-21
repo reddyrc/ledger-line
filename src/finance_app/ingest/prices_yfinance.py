@@ -1,9 +1,43 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 import pandas as pd
 import yfinance as yf
+
+
+def _num(v: Any) -> Optional[float]:
+    if v is None:
+        return None
+    try:
+        fv = float(v)
+        if fv != fv:  # NaN
+            return None
+        return fv
+    except (TypeError, ValueError):
+        return None
+
+
+def _period_dict(df: Any, period: str = "0q") -> dict[str, Optional[float]]:
+    """Extract one period row from a yfinance Analysis DataFrame."""
+    if df is None:
+        return {}
+    try:
+        if hasattr(df, "empty") and df.empty:
+            return {}
+        if period in getattr(df, "index", []):
+            row = df.loc[period]
+        elif hasattr(df, "iloc") and len(df):
+            # Fall back to first row when index labels differ
+            row = df.iloc[0]
+        else:
+            return {}
+        out: dict[str, Optional[float]] = {}
+        for k, v in row.items():
+            out[str(k)] = _num(v)
+        return out
+    except Exception:
+        return {}
 
 
 def fetch_yfinance_ohlcv(
@@ -120,4 +154,34 @@ def fetch_yfinance_short_snapshot(symbol: str) -> dict:
         "short_pct_float": pct,
         "short_ratio": num("shortRatio"),
         "shares_short_prior_month": num("sharesShortPriorMonth"),
+    }
+
+
+def fetch_yfinance_earnings_analysis(symbol: str) -> dict[str, Any]:
+    """
+    Yahoo Analysis module snapshot for the current quarter (0q):
+    revenue/EPS estimates, EPS revisions, EPS trend.
+    """
+    empty: dict[str, Any] = {
+        "revenue_0q": {},
+        "earnings_0q": {},
+        "eps_revisions_0q": {},
+        "eps_trend_0q": {},
+    }
+    try:
+        t = yf.Ticker(symbol.upper())
+    except Exception:
+        return empty
+
+    def safe(attr: str):
+        try:
+            return getattr(t, attr, None)
+        except Exception:
+            return None
+
+    return {
+        "revenue_0q": _period_dict(safe("revenue_estimate"), "0q"),
+        "earnings_0q": _period_dict(safe("earnings_estimate"), "0q"),
+        "eps_revisions_0q": _period_dict(safe("eps_revisions"), "0q"),
+        "eps_trend_0q": _period_dict(safe("eps_trend"), "0q"),
     }

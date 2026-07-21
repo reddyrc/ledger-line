@@ -158,7 +158,17 @@ def valuation_history_payload(
     force_refresh: bool = False,
 ) -> dict[str, Any]:
     """Ensure data is cached and refresh earnings dates on every ticker load."""
+    from finance_app.metrics.valuation_history import INDEX_BENCHMARKS
+
     get_or_fetch_ohlcv(symbol, start=start, end=end, force_refresh=force_refresh)
+    # Keep index proxies cached so post-earnings benchmark returns can be computed.
+    for bench in INDEX_BENCHMARKS:
+        if bench == symbol.upper():
+            continue
+        try:
+            get_or_fetch_ohlcv(bench)
+        except Exception:
+            pass
     return compute_valuation_history(
         symbol,
         start=start,
@@ -211,10 +221,16 @@ def earnings_calendar_payload(
     symbols: Optional[list[str]] = None,
     refresh: bool = False,
 ) -> dict[str, Any]:
-    """Upcoming/past earnings events for a date window."""
+    """Upcoming/past earnings events for a date window, with trader context."""
     from datetime import datetime, timedelta, timezone
 
+    import pandas as pd
+
     from finance_app.db import load_earnings_events_range
+    from finance_app.metrics.earnings_calendar import (
+        enrich_event,
+        refresh_analysis_batch,
+    )
     from finance_app.metrics.option_strategies import DEFAULT_SCAN_SYMBOLS
 
     now = datetime.now(timezone.utc)
@@ -223,13 +239,24 @@ def earnings_calendar_payload(
     if not end:
         end = (now + timedelta(days=45)).strftime("%Y-%m-%d")
 
-    tickers = symbols or DEFAULT_SCAN_SYMBOLS
+    tickers = [s.upper() for s in (symbols or DEFAULT_SCAN_SYMBOLS)][:15]
     if refresh:
-        for sym in tickers[:15]:
+        for sym in tickers:
             try:
                 refresh_symbol_earnings(sym)
             except Exception:
                 continue
+        # Warm Yahoo analysis snapshots (TTL-cached; parallel)
+        try:
+            refresh_analysis_batch(tickers, force=True)
+        except Exception:
+            pass
+    else:
+        # Soft-warm analysis from cache / TTL without blocking on missing data
+        try:
+            refresh_analysis_batch(tickers, force=False)
+        except Exception:
+            pass
 
     df = load_earnings_events_range(start=start, end=end + "T23:59:59", symbols=tickers)
     events: list[dict[str, Any]] = []
@@ -241,23 +268,23 @@ def earnings_calendar_payload(
             report_s = str(report)
         days = None
         try:
-            import pandas as pd
-
             ts = pd.to_datetime(report, errors="coerce")
             if not pd.isna(ts):
                 days = (ts.date() - now.date()).days
         except Exception:
             days = None
-        events.append(
-            {
-                "symbol": r["symbol"],
-                "report_datetime": report_s,
-                "reported_eps": _f(r.get("reported_eps")),
-                "eps_estimate": _f(r.get("eps_estimate")),
-                "surprise_pct": _f(r.get("surprise_pct")),
-                "days_to_earnings": days,
-            }
-        )
+        base = {
+            "symbol": str(r["symbol"]).upper(),
+            "report_datetime": report_s,
+            "reported_eps": _f(r.get("reported_eps")),
+            "eps_estimate": _f(r.get("eps_estimate")),
+            "surprise_pct": _f(r.get("surprise_pct")),
+            "days_to_earnings": days,
+        }
+        try:
+            events.append(enrich_event(base))
+        except Exception:
+            events.append(base)
 
     return {
         "from": start,
@@ -265,7 +292,11 @@ def earnings_calendar_payload(
         "symbols": tickers,
         "events": events,
         "disclaimer": (
-            "Earnings dates from Yahoo Finance via yfinance; times may be estimates."
+            "Earnings dates and estimates from Yahoo Finance via yfinance; times may "
+            "be estimates. Post-print moves use local price history. Options IV / "
+            "expected move use cached snapshots when available (visit a symbol's "
+            "options page to refresh). Company guidance flags and segment notes are "
+            "not available from Yahoo/EDGAR."
         ),
     }
 

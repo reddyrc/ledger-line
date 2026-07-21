@@ -29,6 +29,17 @@ export const OPTION_TIPS = {
     "Best bid (what buyers pay) / best ask (what sellers want). A wide gap means poor liquidity and worse fills.",
   last: "Price of the most recent trade (may be stale for illiquid contracts).",
   iv: "Implied volatility of this contract: the annualized volatility that makes its model price match the market price.",
+  hv20:
+    "20-day historical (realized) volatility from daily closes, annualized. Compare to ATM IV to see if options look rich or cheap vs recent moves.",
+  ivHvPremium:
+    "ATM IV minus 20-day HV. Positive = implied > realized (options relatively expensive); negative favors buying premium.",
+  totalOi: "Sum of call and put open interest for the snapshot expiration.",
+  earningsCrush:
+    "Change in ATM IV from before to after the earnings report (after − before). Negative = classic IV crush.",
+  earningsActualMove:
+    "Close-to-close stock return around the earnings date (pre-print close to next session close).",
+  earningsExpectedMove:
+    "One-session move implied by pre-earnings ATM IV: spot × IV × √(1/365). Rough proxy when the live straddle was not stored.",
   breakeven:
     "Stock price at expiration where this option breaks even: strike + premium for calls, strike − premium for puts.",
   session: "Today's low–high traded range for this contract's premium.",

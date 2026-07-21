@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 import pandas as pd
@@ -275,6 +275,382 @@ def compute_uoa(
         r["vs_median_vol_oi"] = _round(rel, 2)
 
     rows.sort(key=lambda x: float(x.get("score") or 0), reverse=True)
+    return rows[:limit]
+
+
+def _expected_move_from_iv(
+    spot: Optional[float], atm_iv: Optional[float], dte: Optional[float]
+) -> Optional[float]:
+    """Approx expected move: spot * IV * sqrt(DTE/365)."""
+    if spot is None or atm_iv is None or dte is None:
+        return None
+    if spot <= 0 or atm_iv <= 0 or dte < 0:
+        return None
+    return spot * atm_iv * math.sqrt(max(dte, 0.0) / 365.0)
+
+
+def _daily_iv_frame(
+    symbol: str,
+    *,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    expiration: Optional[str] = None,
+) -> pd.DataFrame:
+    """One ATM-IV row per as_of_date (nearest DTE unless expiration pinned)."""
+    df = load_options_iv_snapshots(
+        symbol, start=start, end=end, expiration=expiration
+    )
+    if df.empty:
+        return df
+    df = df.copy()
+    df = df.sort_values(["as_of_date", "dte"], ascending=[True, True])
+    if expiration:
+        return df.drop_duplicates(subset=["as_of_date"], keep="first")
+    return df.groupby("as_of_date", as_index=False).first()
+
+
+def _hv_frame(symbol: str, start: Optional[str], end: Optional[str]) -> pd.DataFrame:
+    """Rolling annualized HV (10/20/30d) aligned to calendar dates."""
+    from finance_app.metrics.price_metrics import (
+        _price_series,
+        daily_returns,
+        rolling_volatility,
+    )
+
+    # Pad start so rolling windows warm up
+    pad_start = start
+    if start:
+        try:
+            pad_start = (
+                datetime.strptime(start[:10], "%Y-%m-%d").date() - timedelta(days=60)
+            ).isoformat()
+        except ValueError:
+            pad_start = start
+    ohlcv = load_ohlcv(symbol, start=pad_start, end=end)
+    if ohlcv.empty:
+        return pd.DataFrame(columns=["date", "hv_10", "hv_20", "hv_30"])
+    prices = _price_series(ohlcv)
+    rets = daily_returns(prices)
+    out = pd.DataFrame({"date": [d.strftime("%Y-%m-%d") for d in rets.index]})
+    out["hv_10"] = rolling_volatility(rets, window=10).values
+    out["hv_20"] = rolling_volatility(rets, window=20).values
+    out["hv_30"] = rolling_volatility(rets, window=30).values
+    if start:
+        out = out[out["date"] >= start[:10]]
+    if end:
+        out = out[out["date"] <= end[:10]]
+    return out.reset_index(drop=True)
+
+
+def iv_history_payload(
+    symbol: str,
+    *,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    expiration: Optional[str] = None,
+) -> dict[str, Any]:
+    """ATM IV + HV + PCR/OI history from options_iv_snapshots and ohlcv."""
+    symbol = symbol.upper()
+    end_d = end or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    start_d = start
+    if not start_d:
+        start_d = (
+            datetime.strptime(end_d[:10], "%Y-%m-%d").date() - timedelta(days=370)
+        ).isoformat()
+
+    daily = _daily_iv_frame(
+        symbol, start=start_d, end=end_d, expiration=expiration
+    )
+    hv = _hv_frame(symbol, start_d, end_d)
+    hv_by_date: dict[str, dict[str, Any]] = {}
+    if not hv.empty:
+        for _, row in hv.iterrows():
+            hv_by_date[str(row["date"])[:10]] = {
+                "hv_10": row.get("hv_10"),
+                "hv_20": row.get("hv_20"),
+                "hv_30": row.get("hv_30"),
+            }
+
+    series: list[dict[str, Any]] = []
+    for _, r in daily.iterrows():
+        d = str(r["as_of_date"])[:10]
+        call_oi = _num(r.get("call_oi"))
+        put_oi = _num(r.get("put_oi"))
+        call_vol = _num(r.get("call_volume"))
+        put_vol = _num(r.get("put_volume"))
+        atm_iv = _num(r.get("atm_iv"))
+        hv_row = hv_by_date.get(d, {})
+        hv_20 = _num(hv_row.get("hv_20"))
+        pcr_oi = (
+            put_oi / call_oi
+            if call_oi is not None and put_oi is not None and call_oi > 0
+            else None
+        )
+        pcr_vol = (
+            put_vol / call_vol
+            if call_vol is not None and put_vol is not None and call_vol > 0
+            else None
+        )
+        total_oi = None
+        if call_oi is not None or put_oi is not None:
+            total_oi = (call_oi or 0.0) + (put_oi or 0.0)
+        premium = None
+        if atm_iv is not None and hv_20 is not None:
+            premium = atm_iv - hv_20
+        series.append(
+            {
+                "date": d,
+                "expiration": r.get("expiration"),
+                "dte": int(r["dte"]) if r.get("dte") is not None and not pd.isna(r.get("dte")) else None,
+                "atm_iv": _round(atm_iv),
+                "spot": _round(r.get("spot")),
+                "hv_10": _round(hv_row.get("hv_10")),
+                "hv_20": _round(hv_20),
+                "hv_30": _round(hv_row.get("hv_30")),
+                "iv_hv_premium": _round(premium, 4),
+                "call_oi": _round(call_oi, 0),
+                "put_oi": _round(put_oi, 0),
+                "total_oi": _round(total_oi, 0),
+                "call_volume": _round(call_vol, 0),
+                "put_volume": _round(put_vol, 0),
+                "pcr_oi": _round(pcr_oi, 4),
+                "pcr_volume": _round(pcr_vol, 4),
+            }
+        )
+
+    # Also emit HV-only points when IV is missing so HV line stays continuous
+    iv_dates = {p["date"] for p in series}
+    for d, hv_row in hv_by_date.items():
+        if d in iv_dates:
+            continue
+        series.append(
+            {
+                "date": d,
+                "expiration": None,
+                "dte": None,
+                "atm_iv": None,
+                "spot": None,
+                "hv_10": _round(hv_row.get("hv_10")),
+                "hv_20": _round(hv_row.get("hv_20")),
+                "hv_30": _round(hv_row.get("hv_30")),
+                "iv_hv_premium": None,
+                "call_oi": None,
+                "put_oi": None,
+                "total_oi": None,
+                "call_volume": None,
+                "put_volume": None,
+                "pcr_oi": None,
+                "pcr_volume": None,
+            }
+        )
+    series.sort(key=lambda x: x["date"])
+
+    latest_iv = next((p for p in reversed(series) if p.get("atm_iv") is not None), None)
+    latest_hv = next((p for p in reversed(series) if p.get("hv_20") is not None), None)
+    iv_count = sum(1 for p in series if p.get("atm_iv") is not None)
+    premium = None
+    if latest_iv and latest_iv.get("atm_iv") is not None and latest_hv and latest_hv.get("hv_20") is not None:
+        premium = latest_iv["atm_iv"] - latest_hv["hv_20"]
+
+    earnings = earnings_crush_history(symbol, start=start_d, end=end_d)
+
+    return {
+        "symbol": symbol,
+        "start": start_d,
+        "end": end_d,
+        "expiration": expiration,
+        "series": series,
+        "sample_count": iv_count,
+        "building_history": iv_count < IV_RANK_MIN_SAMPLES,
+        "latest": {
+            "atm_iv": latest_iv.get("atm_iv") if latest_iv else None,
+            "hv_20": latest_hv.get("hv_20") if latest_hv else None,
+            "iv_hv_premium": _round(premium, 4),
+            "pcr_oi": latest_iv.get("pcr_oi") if latest_iv else None,
+            "total_oi": latest_iv.get("total_oi") if latest_iv else None,
+            "date": latest_iv.get("date") if latest_iv else None,
+        },
+        "earnings_history": earnings,
+        "disclaimer": (
+            "ATM IV from collected chain snapshots (grows when options are loaded or "
+            "via the IV snapshot job). HV is annualized realized vol from daily closes. "
+            "Expected move around earnings uses IV × √(DTE/365) when a pre-event snapshot exists."
+        ),
+    }
+
+
+def earnings_crush_history(
+    symbol: str,
+    *,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    limit: int = 12,
+) -> list[dict[str, Any]]:
+    """Past earnings: actual spot move vs IV-implied expected move, pre/post ATM IV."""
+    symbol = symbol.upper()
+    try:
+        events = load_earnings_events(symbol)
+    except Exception:
+        return []
+    if events.empty:
+        return []
+
+    ohlcv = load_ohlcv(symbol)
+    price_map: dict[date, float] = {}
+    if not ohlcv.empty:
+        from finance_app.metrics.price_metrics import _price_series
+
+        prices = _price_series(ohlcv)
+        for idx, val in prices.items():
+            try:
+                d = pd.Timestamp(idx).date()
+                price_map[d] = float(val)
+            except (TypeError, ValueError):
+                continue
+    price_dates = sorted(price_map.keys())
+
+    # Load a wide IV window around events
+    iv_df = load_options_iv_snapshots(symbol)
+    if not iv_df.empty:
+        iv_df = iv_df.dropna(subset=["atm_iv"]).copy()
+        iv_df = iv_df.sort_values(["as_of_date", "dte"], ascending=[True, True])
+        iv_daily = iv_df.groupby("as_of_date", as_index=False).first()
+        iv_daily["as_of_date"] = iv_daily["as_of_date"].astype(str).str[:10]
+    else:
+        iv_daily = pd.DataFrame()
+
+    dates = pd.to_datetime(events["report_datetime"], errors="coerce")
+    events = events.assign(_report_date=dates.dt.date)
+    events = events[events["_report_date"].notna()].sort_values("_report_date")
+
+    start_d = datetime.strptime(start[:10], "%Y-%m-%d").date() if start else None
+    end_d = datetime.strptime(end[:10], "%Y-%m-%d").date() if end else None
+
+    def _close_on_or_before(target: date) -> tuple[Optional[date], Optional[float]]:
+        for d in reversed(price_dates):
+            if d <= target:
+                return d, price_map.get(d)
+        return None, None
+
+    def _close_on_or_after(target: date) -> tuple[Optional[date], Optional[float]]:
+        for d in price_dates:
+            if d >= target:
+                return d, price_map.get(d)
+        return None, None
+
+    def _iv_near(target: date, *, before: bool, window: int = 5) -> Optional[dict[str, Any]]:
+        if iv_daily.empty:
+            return None
+        best = None
+        best_dist = None
+        for _, row in iv_daily.iterrows():
+            try:
+                d = datetime.strptime(str(row["as_of_date"])[:10], "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            if before:
+                if d >= target or (target - d).days > window:
+                    continue
+                dist = (target - d).days
+            else:
+                if d <= target or (d - target).days > window:
+                    continue
+                dist = (d - target).days
+            if best_dist is None or dist < best_dist:
+                best_dist = dist
+                best = row
+        if best is None:
+            return None
+        dte_raw = best.get("dte")
+        dte_val = None
+        if dte_raw is not None and not pd.isna(dte_raw):
+            dte_val = int(dte_raw)
+        return {
+            "date": str(best["as_of_date"])[:10],
+            "atm_iv": _round(best.get("atm_iv")),
+            "spot": _round(best.get("spot")),
+            "dte": dte_val,
+        }
+
+    rows: list[dict[str, Any]] = []
+    for _, ev in events.iterrows():
+        report_date = ev["_report_date"]
+        if start_d and report_date < start_d:
+            continue
+        if end_d and report_date > end_d:
+            continue
+
+        pre_d, pre_px = _close_on_or_before(report_date - timedelta(days=1))
+        post_d, post_px = _close_on_or_after(report_date)
+        if post_d == report_date:
+            nxt = None
+            for d in price_dates:
+                if d > report_date:
+                    nxt = d
+                    break
+            if nxt is not None:
+                post_d, post_px = nxt, price_map.get(nxt)
+
+        actual_pct = None
+        if pre_px is not None and post_px is not None and pre_px > 0:
+            actual_pct = (post_px / pre_px) - 1.0
+
+        iv_before = _iv_near(report_date, before=True)
+        iv_after = _iv_near(report_date, before=False)
+        expected_move = None
+        expected_pct = None
+        if iv_before:
+            # One-session implied move from ATM IV (common earnings comparison)
+            expected_move = _expected_move_from_iv(
+                iv_before.get("spot") or pre_px,
+                iv_before.get("atm_iv"),
+                1.0,
+            )
+            spot_ref = iv_before.get("spot") or pre_px
+            if expected_move is not None and spot_ref and spot_ref > 0:
+                expected_pct = expected_move / spot_ref
+
+        iv_crush = None
+        if (
+            iv_before
+            and iv_after
+            and iv_before.get("atm_iv") is not None
+            and iv_after.get("atm_iv") is not None
+        ):
+            iv_crush = iv_after["atm_iv"] - iv_before["atm_iv"]
+
+        hit = None
+        if actual_pct is not None and expected_pct is not None:
+            hit = abs(actual_pct) >= expected_pct
+
+        report_raw = ev["report_datetime"]
+        report_s = (
+            report_raw.isoformat()
+            if hasattr(report_raw, "isoformat")
+            else str(report_raw)
+        )
+        rows.append(
+            {
+                "report_datetime": report_s,
+                "report_date": report_date.isoformat(),
+                "reported_eps": _round(ev.get("reported_eps")),
+                "eps_estimate": _round(ev.get("eps_estimate")),
+                "surprise_pct": _round(ev.get("surprise_pct")),
+                "pre_close": _round(pre_px),
+                "post_close": _round(post_px),
+                "actual_move_pct": _round(actual_pct, 4),
+                "expected_move": _round(expected_move),
+                "expected_move_pct": _round(expected_pct, 4),
+                "hit_expected": hit,
+                "iv_before": iv_before.get("atm_iv") if iv_before else None,
+                "iv_after": iv_after.get("atm_iv") if iv_after else None,
+                "iv_crush": _round(iv_crush, 4),
+                "iv_before_date": iv_before.get("date") if iv_before else None,
+                "iv_after_date": iv_after.get("date") if iv_after else None,
+            }
+        )
+
+    rows.sort(key=lambda x: x["report_date"], reverse=True)
     return rows[:limit]
 
 

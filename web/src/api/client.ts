@@ -2,12 +2,14 @@ import type {
   EarningsCalendarResponse,
   FundamentalsResponse,
   HistoryResponse,
+  IvHistoryResponse,
   MacroListResponse,
   MacroSeriesResponse,
   MetricsResponse,
   OptionsContractResponse,
   OptionsResponse,
   PeerComparisonResponse,
+  RollingResponse,
   ScreenRefreshResponse,
   ScreenResponse,
   ShortInterestResponse,
@@ -266,6 +268,46 @@ export function fetchOptionsUoa(
     `/symbols/${encodeURIComponent(symbol)}/options/uoa${qs({
       expiration: opts.expiration,
       limit: opts.limit != null ? String(opts.limit) : undefined,
+      refresh: opts.refresh ? true : undefined,
+    })}`,
+    signal,
+  );
+}
+
+export function fetchOptionsIvHistory(
+  symbol: string,
+  opts: {
+    start?: string;
+    end?: string;
+    expiration?: string;
+  } = {},
+  signal?: AbortSignal,
+) {
+  return getJson<IvHistoryResponse>(
+    `/symbols/${encodeURIComponent(symbol)}/options/iv-history${qs({
+      start: opts.start,
+      end: opts.end,
+      expiration: opts.expiration,
+    })}`,
+    signal,
+  );
+}
+
+export function fetchRolling(
+  symbol: string,
+  opts: {
+    start?: string;
+    end?: string;
+    window?: number;
+    refresh?: boolean;
+  } = {},
+  signal?: AbortSignal,
+) {
+  return getJson<RollingResponse>(
+    `/symbols/${encodeURIComponent(symbol)}/rolling${qs({
+      start: opts.start,
+      end: opts.end,
+      window: opts.window != null ? String(opts.window) : undefined,
       refresh: opts.refresh ? true : undefined,
     })}`,
     signal,

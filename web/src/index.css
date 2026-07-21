@@ -594,6 +594,28 @@ input {
   font-weight: 650;
 }
 
+.price-compare-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.65rem 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.price-compare-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.45rem;
+}
+
+.price-compare-form .strategy-capital-input {
+  width: 7.5rem;
+}
+
+.price-compare-bar .chip-row {
+  margin: 0;
+}
+
 .chip-row {
   display: flex;
   flex-wrap: wrap;
@@ -796,6 +818,14 @@ input {
 
 .screener-table th {
   white-space: nowrap;
+}
+
+.earnings-cal-table .pos {
+  color: var(--accent);
+}
+
+.earnings-cal-table .neg {
+  color: var(--danger);
 }
 
 .sort-btn {
@@ -1040,14 +1070,47 @@ input {
   color: var(--danger);
 }
 
-/* Attribute-driven hover tooltips for data chips */
-.chip[data-tip] {
+/* Attribute-driven hover tooltips for data chips and labeled metrics */
+.chip[data-tip],
+.has-tip[data-tip] {
   position: relative;
   cursor: help;
 }
 
+.has-tip {
+  position: relative;
+  cursor: help;
+  border-bottom: 1px dotted color-mix(in srgb, var(--muted) 55%, transparent);
+}
+
+/* Fixed-position tooltip rendered via portal — immune to overflow clipping */
+.floating-tip {
+  position: fixed;
+  transform: translate(-50%, calc(-100% - 8px));
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.7rem;
+  width: max-content;
+  max-width: 280px;
+  font-size: 0.78rem;
+  font-family: var(--font-body);
+  font-weight: 400;
+  line-height: 1.4;
+  white-space: normal;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: normal;
+  z-index: 1000;
+  box-shadow: var(--shadow);
+  pointer-events: none;
+}
+
 .chip[data-tip]:hover::after,
-.chip[data-tip]:focus-visible::after {
+.chip[data-tip]:focus-visible::after,
+.has-tip[data-tip]:hover::after,
+.has-tip[data-tip]:focus-visible::after {
   content: attr(data-tip);
   position: absolute;
   bottom: calc(100% + 8px);
@@ -1059,19 +1122,24 @@ input {
   border-radius: 8px;
   padding: 0.5rem 0.7rem;
   width: max-content;
-  max-width: 260px;
+  max-width: 280px;
   font-size: 0.78rem;
   font-family: var(--font-body);
+  font-weight: 400;
   line-height: 1.4;
   white-space: normal;
   text-align: left;
+  text-transform: none;
+  letter-spacing: normal;
   z-index: 40;
   box-shadow: var(--shadow);
   pointer-events: none;
 }
 
 .chip[data-tip]:hover::before,
-.chip[data-tip]:focus-visible::before {
+.chip[data-tip]:focus-visible::before,
+.has-tip[data-tip]:hover::before,
+.has-tip[data-tip]:focus-visible::before {
   content: "";
   position: absolute;
   bottom: calc(100% + 3px);
@@ -1084,6 +1152,37 @@ input {
   border-bottom: 1px solid var(--border);
   z-index: 41;
   pointer-events: none;
+}
+
+.balance-sheet-wrap {
+  margin-top: 1.1rem;
+}
+
+.balance-sheet-table .bs-section-row td,
+.balance-sheet-history-table .bs-section-row td {
+  border-bottom: none;
+  padding-top: 0.85rem;
+  padding-bottom: 0.25rem;
+}
+
+.bs-section-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.balance-sheet-history-table th,
+.balance-sheet-history-table td {
+  white-space: nowrap;
+}
+
+.fundamentals-panel .ratio-cell .has-tip {
+  display: inline-block;
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-bottom: 0.15rem;
 }
 
 .strategy-card-grid {
@@ -1284,6 +1383,22 @@ input {
   margin: 0;
 }
 
+.panel-howto {
+  margin: 0.45rem 0 0.75rem;
+  padding-left: 1.15rem;
+  line-height: 1.45;
+  max-width: 42rem;
+}
+
+.panel-howto li + li {
+  margin-top: 0.2rem;
+}
+
+.panel-howto strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
 .muted-chip {
   color: var(--muted);
 }
@@ -1332,6 +1447,19 @@ input {
   justify-content: space-between;
   gap: 1rem;
   font-size: 0.85rem;
+}
+
+/* Stock vs index comparison layout inside the earnings tooltip.
+   Column count is set inline (varies with available index proxies). */
+.earnings-tooltip-row.earnings-tooltip-cols {
+  display: grid;
+  grid-template-columns: 2.4rem 1fr 1fr;
+  gap: 0.6rem;
+  font-size: 0.8rem;
+}
+
+.earnings-tooltip-cols > span:nth-child(n + 2) {
+  text-align: right;
 }
 
 .earnings-tooltip-row .pos {

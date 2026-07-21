@@ -18,6 +18,10 @@ from finance_app.ingest.prices_yfinance import fetch_yfinance_earnings_events
 
 FILING_FORMS = {"10-K", "10-Q", "10-K/A", "10-Q/A"}
 
+# Index proxies used for post-earnings benchmark returns:
+# SPY = S&P 500, DIA = Dow Jones Industrial Average, QQQ = Nasdaq-100.
+INDEX_BENCHMARKS = ("SPY", "DIA", "QQQ")
+
 
 def compute_valuation_history(
     ticker: str,
@@ -119,12 +123,15 @@ def compute_valuation_history(
     )
     prices_full["price"] = prices_full[full_col].astype(float)
 
+    benchmark_prices = _benchmark_price_frames(ticker)
+
     earnings = _earnings_series(
         fund,
         prices=prices_full[["date", "price"]],
         report_events=report_events,
         start=start,
         end=end,
+        benchmark_prices=benchmark_prices,
     )
 
     if asof.empty:
@@ -195,6 +202,7 @@ def compute_valuation_history(
         "summary": summary,
         "series": series_rows,
         "earnings": earnings,
+        "benchmarks": list(benchmark_prices.keys()),
         "disclaimer": (
             "Valuation uses daily prices joined as-of to SEC EDGAR facts. "
             "TTM EPS/revenue sum the last four quarterly reports when available; "
@@ -384,12 +392,43 @@ def _forward_returns(
     }
 
 
+def _benchmark_price_frames(ticker: str) -> dict[str, pd.DataFrame]:
+    """
+    Daily close series for each index proxy (SPY/DIA/QQQ) available locally.
+
+    Reads only the local cache — the valuation history service prefetches
+    these, so this avoids network calls inside metric computation.
+    """
+    frames: dict[str, pd.DataFrame] = {}
+    for sym in INDEX_BENCHMARKS:
+        if ticker.upper() == sym:
+            continue
+        try:
+            bench = load_ohlcv(sym)
+        except Exception:
+            continue
+        if bench is None or bench.empty:
+            continue
+        bench = bench.copy()
+        bench["date"] = pd.to_datetime(bench["date"])
+        bench = bench.sort_values("date")
+        col = (
+            "adj_close"
+            if "adj_close" in bench.columns and bench["adj_close"].notna().any()
+            else "close"
+        )
+        bench["price"] = bench[col].astype(float)
+        frames[sym] = bench[["date", "price"]]
+    return frames
+
+
 def _earnings_series(
     fund: pd.DataFrame,
     prices: Optional[pd.DataFrame] = None,
     report_events: Optional[pd.DataFrame] = None,
     start: Optional[str] = None,
     end: Optional[str] = None,
+    benchmark_prices: Optional[dict[str, pd.DataFrame]] = None,
 ) -> list[dict[str, Any]]:
     eps = _concept_frame(fund, "EPS")
     if eps.empty:
@@ -436,6 +475,11 @@ def _earnings_series(
             }
         )
 
+        index_returns: dict[str, dict[str, Optional[float]]] = {}
+        if benchmark_prices and report_datetime is not None:
+            for sym, frame in benchmark_prices.items():
+                index_returns[sym] = _forward_returns(frame, report_datetime)
+
         out.append(
             {
                 "date": r["end_date"].strftime("%Y-%m-%d"),
@@ -454,6 +498,7 @@ def _earnings_series(
                 ),
                 "anchor": "report_date" if report_datetime is not None else None,
                 **rets,
+                "index_returns": index_returns or None,
             }
         )
     return out

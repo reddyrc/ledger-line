@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 
 import {
@@ -19,6 +19,7 @@ import {
   startForPreset,
   todayISO,
   useFundamentals,
+  useHistories,
   useHistory,
   useMetrics,
   usePeers,
@@ -32,12 +33,41 @@ import { MetricStrip } from "../components/MetricStrip";
 import { OptionsSummaryPanel } from "../components/OptionsSummaryPanel";
 import { PeerComparisonPanel } from "../components/PeerComparisonPanel";
 import { PriceChart } from "../components/PriceChart";
+import { RollingRiskPanel } from "../components/RollingRiskPanel";
 import { SectionRangeControls } from "../components/SectionRangeControls";
 import { ShortInterestPanel } from "../components/ShortInterestPanel";
 import { TechnicalsPanel } from "../components/TechnicalsPanel";
 import { ValuationHistoryPanel } from "../components/ValuationHistoryPanel";
 import { useSectionRange } from "../hooks/useSectionRange";
 import { normalizeTicker } from "../lib/format";
+
+const COMPARE_KEY = "ledgerline.price.compare";
+
+function readCompareTickers(primary: string): string[] {
+  try {
+    const raw = localStorage.getItem(`${COMPARE_KEY}.${primary}`);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((t) => normalizeTicker(String(t)))
+      .filter((t) => t && t !== primary)
+      .slice(0, 5);
+  } catch {
+    return [];
+  }
+}
+
+function writeCompareTickers(primary: string, tickers: string[]) {
+  try {
+    localStorage.setItem(
+      `${COMPARE_KEY}.${primary}`,
+      JSON.stringify(tickers.slice(0, 5)),
+    );
+  } catch {
+    /* ignore */
+  }
+}
 
 export function SymbolPage() {
   const { symbol: raw } = useParams();
@@ -51,8 +81,16 @@ export function SymbolPage() {
   const [benchmark, setBenchmark] = useState("SPY");
   const [benchDraft, setBenchDraft] = useState("SPY");
   const [customPeers, setCustomPeers] = useState<string[]>([]);
+  const [compareTickers, setCompareTickers] = useState<string[]>(() =>
+    readCompareTickers(normalizeTicker(raw ?? "")),
+  );
   const [refreshing, setRefreshing] = useState(false);
   const qc = useQueryClient();
+
+  // Reset compare list when navigating to a different primary symbol
+  useEffect(() => {
+    setCompareTickers(readCompareTickers(symbol));
+  }, [symbol]);
 
   const globalSelection: RangeSelection = useMemo(
     () => ({ mode, preset, custom }),
@@ -67,8 +105,25 @@ export function SymbolPage() {
   const valuationRange = useSectionRange(globalSelection);
   const shortInterestRange = useSectionRange(globalSelection);
   const technicalsRange = useSectionRange(globalSelection);
+  const rollingRange = useSectionRange(globalSelection);
 
   const history = useHistory(symbol, priceRange.bounds);
+  const compareQueries = useHistories(compareTickers, priceRange.bounds);
+  const compareSeries = compareTickers.map((t, i) => ({
+    symbol: t,
+    bars: compareQueries[i]?.data?.bars ?? [],
+  }));
+  const compareLoading = compareQueries.some((q) => q.isLoading);
+
+  function setCompare(next: string[]) {
+    const cleaned = next
+      .map((t) => normalizeTicker(t))
+      .filter((t) => t && t !== symbol)
+      .slice(0, 5);
+    setCompareTickers(cleaned);
+    writeCompareTickers(symbol, cleaned);
+  }
+
   const metrics = useMetrics(symbol, bounds, benchmark);
   const technicals = useTechnicals(symbol, technicalsRange.bounds);
   const fundamentals = useFundamentals(symbol);
@@ -233,7 +288,14 @@ export function SymbolPage() {
         {history.isLoading ? (
           <div className="chart-skeleton skeleton-block" />
         ) : (
-          <PriceChart bars={history.data?.bars ?? []} />
+          <PriceChart
+            symbol={symbol}
+            bars={history.data?.bars ?? []}
+            compare={compareSeries}
+            compareTickers={compareTickers}
+            onCompareChange={setCompare}
+            compareLoading={compareLoading}
+          />
         )}
       </div>
 
@@ -277,6 +339,22 @@ export function SymbolPage() {
       />
 
       <OptionsSummaryPanel symbol={symbol} />
+
+      <RollingRiskPanel
+        symbol={symbol}
+        bounds={rollingRange.bounds}
+        rangeControls={
+          <SectionRangeControls
+            label="Rolling risk"
+            selection={rollingRange.selection}
+            isOverridden={rollingRange.isOverridden}
+            onPreset={rollingRange.selectPreset}
+            onCustomMode={rollingRange.selectCustomMode}
+            onCustomChange={rollingRange.setCustom}
+            onFollowGlobal={rollingRange.followGlobal}
+          />
+        }
+      />
 
       <div className="two-col">
         <TechnicalsPanel

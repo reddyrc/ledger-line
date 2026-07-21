@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   bootstrapMacro,
@@ -12,9 +12,11 @@ import {
   fetchOptionsContract,
   fetchOptionStrategies,
   fetchOptionStrategyDetail,
+  fetchOptionsIvHistory,
   fetchStrategiesScan,
   fetchEarningsCalendar,
   fetchPeers,
+  fetchRolling,
   fetchScreen,
   fetchScreenSectors,
   fetchTechnicals,
@@ -118,6 +120,22 @@ export function useHistory(
         signal,
       ),
     enabled: Boolean(symbol) && enabled,
+  });
+}
+
+/** Fetch OHLCV for several compare tickers in parallel. */
+export function useHistories(symbols: string[], bounds: DateBounds) {
+  return useQueries({
+    queries: symbols.map((symbol) => ({
+      queryKey: ["history", symbol, bounds.start ?? null, bounds.end ?? null],
+      queryFn: ({ signal }: { signal?: AbortSignal }) =>
+        fetchHistory(
+          symbol,
+          { start: bounds.start, end: bounds.end },
+          signal,
+        ),
+      enabled: Boolean(symbol),
+    })),
   });
 }
 
@@ -360,6 +378,46 @@ export function useEarningsCalendar(
     ],
     queryFn: ({ signal }) => fetchEarningsCalendar(opts, signal),
     enabled,
+  });
+}
+
+export function useOptionsIvHistory(
+  symbol: string,
+  opts: { start?: string; end?: string; expiration?: string } = {},
+) {
+  return useQuery({
+    queryKey: [
+      "options-iv-history",
+      symbol,
+      opts.start ?? null,
+      opts.end ?? null,
+      opts.expiration ?? null,
+    ],
+    queryFn: ({ signal }) => fetchOptionsIvHistory(symbol, opts, signal),
+    enabled: Boolean(symbol),
+  });
+}
+
+export function useRolling(
+  symbol: string,
+  bounds: DateBounds,
+  window = 63,
+) {
+  return useQuery({
+    queryKey: [
+      "rolling",
+      symbol,
+      bounds.start ?? null,
+      bounds.end ?? null,
+      window,
+    ],
+    queryFn: ({ signal }) =>
+      fetchRolling(
+        symbol,
+        { start: bounds.start, end: bounds.end, window },
+        signal,
+      ),
+    enabled: Boolean(symbol),
   });
 }
 

@@ -143,3 +143,146 @@ def test_scenario_grid_long_call_benefits_from_up_move():
     down = next(g for g in grid["grid"] if g["spot_pct"] == -0.05 and g["iv_pct"] == 0.0)
     assert up["pnl"] is not None and down["pnl"] is not None
     assert up["pnl"] > down["pnl"]
+
+
+def test_iv_history_includes_hv_and_pcr(tmp_path, monkeypatch):
+    import finance_app.config as cfg
+    import finance_app.db as db
+    from finance_app.config import Settings
+    from finance_app.metrics.options import iv_history_payload
+
+    db_path = tmp_path / "ivhist.db"
+    monkeypatch.setenv("DATABASE_PATH", str(db_path))
+    cfg.get_settings.cache_clear()
+    monkeypatch.setattr(cfg, "get_settings", lambda: Settings(database_path=str(db_path)))
+    db.init_db()
+
+    today = date.today()
+    prices = []
+    px = 100.0
+    for i in range(40):
+        d = today - timedelta(days=40 - i)
+        px *= 1.0 + ((i % 5) - 2) * 0.01
+        prices.append(
+            {
+                "date": d.isoformat(),
+                "open": px,
+                "high": px * 1.01,
+                "low": px * 0.99,
+                "close": px,
+                "adj_close": px,
+                "volume": 1_000_000,
+            }
+        )
+    db.upsert_ohlcv(pd.DataFrame(prices), "TEST", source="test")
+
+    exp = (today + timedelta(days=30)).isoformat()
+    for i in range(25):
+        d = (today - timedelta(days=25 - i)).isoformat()
+        db.upsert_options_iv_snapshot(
+            symbol="TEST",
+            as_of_date=d,
+            expiration=exp,
+            dte=30,
+            atm_iv=0.25 + i * 0.002,
+            spot=100.0 + i,
+            call_volume=1000,
+            put_volume=1200,
+            call_oi=5000,
+            put_oi=6000,
+        )
+
+    payload = iv_history_payload("TEST")
+    assert payload["sample_count"] >= 20
+    assert payload["latest"]["atm_iv"] is not None
+    assert payload["latest"]["hv_20"] is not None
+    assert payload["latest"]["iv_hv_premium"] is not None
+    assert payload["latest"]["pcr_oi"] is not None
+    assert any(p.get("atm_iv") is not None for p in payload["series"])
+    assert any(p.get("hv_20") is not None for p in payload["series"])
+    assert any(p.get("pcr_oi") is not None for p in payload["series"])
+
+
+def test_earnings_crush_actual_move(tmp_path, monkeypatch):
+    import finance_app.config as cfg
+    import finance_app.db as db
+    from finance_app.config import Settings
+    from finance_app.metrics.options import earnings_crush_history
+
+    db_path = tmp_path / "crush.db"
+    monkeypatch.setenv("DATABASE_PATH", str(db_path))
+    cfg.get_settings.cache_clear()
+    monkeypatch.setattr(cfg, "get_settings", lambda: Settings(database_path=str(db_path)))
+    db.init_db()
+
+    report = date.today() - timedelta(days=10)
+    prices = []
+    for i, px in enumerate([100.0, 100.0, 100.0, 110.0, 110.0]):
+        d = report - timedelta(days=2) + timedelta(days=i)
+        prices.append(
+            {
+                "date": d.isoformat(),
+                "open": px,
+                "high": px,
+                "low": px,
+                "close": px,
+                "adj_close": px,
+                "volume": 1e6,
+            }
+        )
+    db.upsert_ohlcv(pd.DataFrame(prices), "TEST", source="test")
+    db.upsert_earnings_events(
+        "TEST",
+        [(report.isoformat() + "T16:00:00", 1.0, 0.9, 0.11)],
+    )
+    db.upsert_options_iv_snapshot(
+        symbol="TEST",
+        as_of_date=(report - timedelta(days=1)).isoformat(),
+        expiration=(report + timedelta(days=20)).isoformat(),
+        dte=20,
+        atm_iv=0.5,
+        spot=100.0,
+    )
+    db.upsert_options_iv_snapshot(
+        symbol="TEST",
+        as_of_date=(report + timedelta(days=1)).isoformat(),
+        expiration=(report + timedelta(days=20)).isoformat(),
+        dte=18,
+        atm_iv=0.3,
+        spot=110.0,
+    )
+
+    rows = earnings_crush_history("TEST")
+    assert rows
+    row = rows[0]
+    assert row["actual_move_pct"] is not None
+    assert row["actual_move_pct"] > 0.05
+    assert row["iv_before"] == 0.5
+    assert row["iv_after"] == 0.3
+    assert row["iv_crush"] is not None and row["iv_crush"] < 0
+
+
+def test_rolling_series_includes_sharpe():
+    from finance_app.metrics.price_metrics import rolling_metrics_series
+
+    today = date.today()
+    rows = []
+    px = 100.0
+    for i in range(90):
+        d = today - timedelta(days=90 - i)
+        px *= 1.001
+        rows.append(
+            {
+                "date": pd.Timestamp(d),
+                "open": px,
+                "high": px,
+                "low": px,
+                "close": px,
+                "adj_close": px,
+                "volume": 1e6,
+            }
+        )
+    series = rolling_metrics_series(pd.DataFrame(rows), window=63)
+    assert series
+    assert "rolling_sharpe" in series[-1]
+    assert series[-1]["rolling_vol_ann"] is not None

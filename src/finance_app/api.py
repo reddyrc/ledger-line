@@ -10,7 +10,7 @@ from finance_app.metrics.option_strategies import (
     strategy_detail,
     generate_strategies,
 )
-from finance_app.metrics.options import options_contract_payload, options_payload
+from finance_app.metrics.options import iv_history_payload, options_contract_payload, options_payload
 from finance_app.metrics.peers import compute_peer_comparison
 from finance_app.services import (
     bootstrap_macro,
@@ -256,11 +256,24 @@ def get_options_uoa(
         "rows": rows[:limit],
         "freshness": chain.get("freshness"),
         "disclaimer": (
-            "Heuristic unusual activity from same-day volume/OI vs chain median — "
-            "not confirmed block prints."
+            "Heuristic volume/OI vs chain median from delayed Yahoo quotes — "
+            "not confirmed block trades."
         ),
-        "error": chain.get("error"),
     }
+
+
+@router.get("/symbols/{symbol}/options/iv-history")
+def get_options_iv_history(
+    symbol: str,
+    start: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    end: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    expiration: Optional[str] = Query(
+        None, description="Pin to one expiration; default nearest-DTE daily series"
+    ),
+) -> dict:
+    return iv_history_payload(
+        symbol, start=start, end=end, expiration=expiration
+    )
 
 
 @router.get("/strategies/scan")
