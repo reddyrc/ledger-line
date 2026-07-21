@@ -4,8 +4,12 @@ import type {
   MacroListResponse,
   MacroSeriesResponse,
   MetricsResponse,
+  OptionsContractResponse,
+  OptionsResponse,
+  PeerComparisonResponse,
   ScreenRefreshResponse,
   ScreenResponse,
+  ShortInterestResponse,
   TechnicalsResponse,
   ValuationHistoryResponse,
 } from "../types/api";
@@ -103,6 +107,81 @@ export function fetchValuationHistory(
 ) {
   return getJson<ValuationHistoryResponse>(
     `/symbols/${encodeURIComponent(symbol)}/valuation-history${qs(opts)}`,
+    signal,
+  );
+}
+
+export function fetchShortInterest(
+  symbol: string,
+  opts: { start?: string; end?: string; refresh?: boolean } = {},
+  signal?: AbortSignal,
+) {
+  return getJson<ShortInterestResponse>(
+    `/symbols/${encodeURIComponent(symbol)}/short-interest${qs(opts)}`,
+    signal,
+  );
+}
+
+export function fetchPeers(
+  symbol: string,
+  opts: { limit?: number; extra?: string[]; refresh?: boolean } = {},
+  signal?: AbortSignal,
+) {
+  return getJson<PeerComparisonResponse>(
+    `/symbols/${encodeURIComponent(symbol)}/peers${qs({
+      limit: opts.limit != null ? String(opts.limit) : undefined,
+      extra: opts.extra?.length ? opts.extra.join(",") : undefined,
+      refresh: opts.refresh ? true : undefined,
+    })}`,
+    signal,
+  );
+}
+
+export function fetchOptions(
+  symbol: string,
+  opts: { expiration?: string; refresh?: boolean } = {},
+  signal?: AbortSignal,
+) {
+  return getJson<OptionsResponse>(
+    `/symbols/${encodeURIComponent(symbol)}/options${qs(opts)}`,
+    signal,
+  );
+}
+
+export function fetchOptionsChain(
+  symbol: string,
+  opts: { expiration?: string; refresh?: boolean } = {},
+  signal?: AbortSignal,
+) {
+  return getJson<OptionsResponse>(
+    `/symbols/${encodeURIComponent(symbol)}/options/chain${qs(opts)}`,
+    signal,
+  );
+}
+
+export function fetchOptionsContract(
+  symbol: string,
+  opts: {
+    contract: string;
+    period?: string;
+    side?: string;
+    strike?: number;
+    day_low?: number;
+    day_high?: number;
+    refresh?: boolean;
+  },
+  signal?: AbortSignal,
+) {
+  return getJson<OptionsContractResponse>(
+    `/symbols/${encodeURIComponent(symbol)}/options/contract${qs({
+      contract: opts.contract,
+      period: opts.period,
+      side: opts.side,
+      strike: opts.strike != null ? String(opts.strike) : undefined,
+      day_low: opts.day_low != null ? String(opts.day_low) : undefined,
+      day_high: opts.day_high != null ? String(opts.day_high) : undefined,
+      refresh: opts.refresh ? true : undefined,
+    })}`,
     signal,
   );
 }

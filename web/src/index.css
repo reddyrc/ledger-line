@@ -701,6 +701,13 @@ input {
   color: var(--banner-error-fg);
 }
 
+.banner.warn {
+  background: rgba(232, 176, 93, 0.12);
+  border-color: rgba(232, 176, 93, 0.35);
+  color: #e8c48a;
+  margin-bottom: 0.75rem;
+}
+
 .banner.ok {
   background: var(--banner-ok-bg);
   color: var(--accent);
@@ -838,6 +845,160 @@ input {
 .chip-median {
   border-color: rgba(110, 200, 192, 0.45);
   color: var(--accent-2);
+}
+
+.options-head-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.options-exp-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.options-exp-select {
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 0.4rem 0.55rem;
+}
+
+.options-full-link {
+  text-decoration: none;
+}
+
+.options-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(18rem, 0.9fr);
+  gap: 1rem;
+  margin-top: 0.75rem;
+}
+
+.options-detail {
+  align-self: start;
+  position: sticky;
+  top: 1rem;
+}
+
+.options-premium-chart {
+  margin-top: 0.75rem;
+  min-height: 220px;
+}
+
+.options-row-atm td {
+  background: color-mix(in srgb, var(--accent-2) 10%, transparent);
+}
+
+.options-row-pain td {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.linkish {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.linkish:hover {
+  color: var(--text);
+}
+
+@media (max-width: 960px) {
+  .options-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .options-detail {
+    position: static;
+  }
+}
+
+.peer-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+  gap: 0.65rem;
+  margin-bottom: 1rem;
+}
+
+.peer-picker {
+  margin-bottom: 1rem;
+}
+
+.peer-add-form {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.peer-add-input {
+  width: 9rem;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 0.5rem 0.65rem;
+}
+
+.peer-add-btn {
+  white-space: nowrap;
+}
+
+.peer-custom-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.55rem;
+}
+
+.peer-custom-chip {
+  cursor: pointer;
+}
+
+.peer-stat {
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+}
+
+.peer-stat-label {
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.peer-stat-value {
+  font-size: 1.05rem;
+  margin-top: 0.2rem;
+}
+
+.peer-stat-meta {
+  margin-top: 0.25rem;
+  line-height: 1.35;
+}
+
+.peer-table-wrap {
+  margin-top: 0.25rem;
+}
+
+.peer-table .peer-row-subject td {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.panel-sub {
+  margin: 0;
 }
 
 .muted-chip {

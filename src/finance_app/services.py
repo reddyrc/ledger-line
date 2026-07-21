@@ -3,8 +3,11 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from finance_app.config import get_settings
+from finance_app.db import load_short_interest
 from finance_app.ingest import get_or_fetch_ohlcv
 from finance_app.ingest.fred import DEFAULT_SERIES, get_or_fetch_macro, ingest_default_macro
+from finance_app.ingest.prices_yfinance import fetch_yfinance_short_snapshot
+from finance_app.ingest.short_interest import ingest_short_interest
 from finance_app.metrics import (
     compute_fundamental_ratios,
     compute_price_metrics,
@@ -163,6 +166,86 @@ def valuation_history_payload(
         refresh=force_refresh,
         refresh_earnings=True,
     )
+
+
+def short_interest_payload(
+    symbol: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    force_refresh: bool = False,
+) -> dict[str, Any]:
+    """FINRA biweekly short interest series + optional Yahoo enrichment."""
+    symbol = symbol.upper()
+    try:
+        ingest_short_interest(
+            symbol, start=start, end=end, force=force_refresh
+        )
+    except Exception as exc:
+        cached = load_short_interest(symbol, start=start, end=end)
+        if cached.empty:
+            return {
+                "symbol": symbol,
+                "latest": None,
+                "series": [],
+                "yahoo": None,
+                "error": str(exc),
+                "disclaimer": (
+                    "Short interest from FINRA Equity Short Interest (biweekly). "
+                    "Exchange-listed coverage is most reliable from mid-2021 onward."
+                ),
+            }
+
+    df = load_short_interest(symbol, start=start, end=end)
+    series: list[dict[str, Any]] = []
+    for _, r in df.iterrows():
+        series.append(
+            {
+                "date": r["settlement_date"].strftime("%Y-%m-%d")
+                if hasattr(r["settlement_date"], "strftime")
+                else str(r["settlement_date"])[:10],
+                "shares_short": _f(r["shares_short"]),
+                "shares_short_prior": _f(r["shares_short_prior"]),
+                "change_pct": _f(r["change_pct"]),
+                "avg_daily_volume": _f(r["avg_daily_volume"]),
+                "days_to_cover": _f(r["days_to_cover"]),
+            }
+        )
+
+    latest = None
+    if series:
+        last = series[-1]
+        latest = {
+            "settlement_date": last["date"],
+            "shares_short": last["shares_short"],
+            "shares_short_prior": last["shares_short_prior"],
+            "change_pct": last["change_pct"],
+            "avg_daily_volume": last["avg_daily_volume"],
+            "days_to_cover": last["days_to_cover"],
+            "source": "finra",
+        }
+
+    yahoo = None
+    try:
+        yahoo = fetch_yfinance_short_snapshot(symbol)
+        if latest is not None and yahoo:
+            if yahoo.get("short_pct_float") is not None:
+                latest["short_pct_float"] = yahoo["short_pct_float"]
+            if yahoo.get("short_ratio") is not None and latest.get("days_to_cover") is None:
+                latest["days_to_cover"] = yahoo["short_ratio"]
+    except Exception:
+        yahoo = None
+
+    return {
+        "symbol": symbol,
+        "latest": latest,
+        "series": series,
+        "yahoo": yahoo,
+        "disclaimer": (
+            "Short interest from FINRA Equity Short Interest (biweekly settlement). "
+            "Short % of float is from Yahoo Finance when available. "
+            "Exchange-listed FINRA coverage is most reliable from mid-2021 onward."
+        ),
+    }
 
 
 def screen_payload(

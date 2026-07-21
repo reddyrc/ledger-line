@@ -157,6 +157,185 @@ export type ValuationHistoryResponse = {
   error?: string;
 };
 
+export type ShortInterestPoint = {
+  date: string;
+  shares_short: number | null;
+  shares_short_prior: number | null;
+  change_pct: number | null;
+  avg_daily_volume: number | null;
+  days_to_cover: number | null;
+};
+
+export type ShortInterestLatest = {
+  settlement_date: string;
+  shares_short: number | null;
+  shares_short_prior: number | null;
+  change_pct: number | null;
+  avg_daily_volume: number | null;
+  days_to_cover: number | null;
+  short_pct_float?: number | null;
+  source?: string | null;
+};
+
+export type ShortInterestResponse = {
+  symbol: string;
+  latest: ShortInterestLatest | null;
+  series: ShortInterestPoint[];
+  yahoo?: {
+    shares_short: number | null;
+    short_pct_float: number | null;
+    short_ratio: number | null;
+    shares_short_prior_month: number | null;
+  } | null;
+  disclaimer?: string;
+  error?: string;
+};
+
+export type PeerMetrics = {
+  ticker: string | null;
+  name: string | null;
+  sector: string | null;
+  industry?: string | null;
+  price: number | null;
+  pe: number | null;
+  pb: number | null;
+  ps: number | null;
+  roe: number | null;
+  net_margin: number | null;
+  momentum_3m: number | null;
+  momentum_12m: number | null;
+  vol_ann: number | null;
+  max_drawdown_1y: number | null;
+  market_cap: number | null;
+  custom?: boolean;
+};
+
+export type PeerSectorStat = {
+  median: number | null;
+  count: number;
+  subject: number | null;
+  percentile: number | null;
+};
+
+export type PeerComparisonResponse = {
+  symbol: string;
+  sector: string | null;
+  industry?: string | null;
+  peer_basis?: "industry" | "sector" | string | null;
+  basis_label?: string | null;
+  subject: PeerMetrics | null;
+  peers: PeerMetrics[];
+  sector_stats: Record<string, PeerSectorStat>;
+  peer_count?: number;
+  custom_tickers?: string[];
+  fetched_at?: string | null;
+  freshness?: "live" | "cached" | "stale" | "error" | string;
+  stale?: boolean;
+  warning?: string;
+  disclaimer?: string;
+  error?: string;
+};
+
+export type OptionContract = {
+  contract_symbol: string | null;
+  side: "call" | "put" | string;
+  strike: number | null;
+  bid: number | null;
+  ask: number | null;
+  last: number | null;
+  mid: number | null;
+  volume: number | null;
+  open_interest: number | null;
+  implied_volatility: number | null;
+  day_low: number | null;
+  day_high: number | null;
+  in_the_money?: boolean | null;
+  breakeven?: number | null;
+  delta?: number | null;
+  gamma?: number | null;
+  theta?: number | null;
+  vega?: number | null;
+  rho?: number | null;
+};
+
+export type OptionsExpectedMove = {
+  atm_strike: number | null;
+  call_mid: number | null;
+  put_mid: number | null;
+  expected_move: number | null;
+  expected_move_pct: number | null;
+  price_low: number | null;
+  price_high: number | null;
+};
+
+export type OptionsTotals = {
+  call_oi: number | null;
+  put_oi: number | null;
+  call_volume: number | null;
+  put_volume: number | null;
+  pcr_oi: number | null;
+  pcr_volume: number | null;
+};
+
+export type OptionsSummary = {
+  max_pain: number | null;
+  expected_move: OptionsExpectedMove;
+  totals: OptionsTotals;
+  atm_strike: number | null;
+};
+
+export type OptionsStrikeRow = {
+  strike: number | null;
+  call: OptionContract | null;
+  put: OptionContract | null;
+};
+
+export type OptionsResponse = {
+  symbol: string;
+  expirations: string[];
+  expiration: string | null;
+  spot: number | null;
+  summary: OptionsSummary | null;
+  preview: OptionsStrikeRow[];
+  calls: OptionContract[];
+  puts: OptionContract[];
+  fetched_at?: string | null;
+  freshness?: string;
+  stale?: boolean;
+  warning?: string;
+  disclaimer?: string;
+  error?: string;
+};
+
+export type OptionsContractHistoryPoint = {
+  date: string;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number | null;
+  volume: number | null;
+};
+
+export type OptionsContractResponse = {
+  symbol: string;
+  contract_symbol: string;
+  period: string;
+  side?: string | null;
+  strike?: number | null;
+  session_day_low?: number | null;
+  session_day_high?: number | null;
+  traded_low: number | null;
+  traded_high: number | null;
+  traded_last: number | null;
+  series: OptionsContractHistoryPoint[];
+  fetched_at?: string | null;
+  freshness?: string;
+  stale?: boolean;
+  warning?: string;
+  disclaimer?: string;
+  error?: string;
+};
+
 export type ScreenRow = {
   ticker: string;
   name: string | null;

@@ -5,6 +5,8 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from finance_app.ingest.fred import DEFAULT_SERIES
+from finance_app.metrics.options import options_contract_payload, options_payload
+from finance_app.metrics.peers import compute_peer_comparison
 from finance_app.services import (
     bootstrap_macro,
     fundamentals_payload,
@@ -12,6 +14,7 @@ from finance_app.services import (
     screen_payload,
     screen_refresh_payload,
     screen_sectors_payload,
+    short_interest_payload,
     symbol_history,
     symbol_metrics,
     symbol_rolling,
@@ -105,6 +108,84 @@ def get_valuation_history(
     if result.get("error") and not result.get("series"):
         raise HTTPException(status_code=404, detail=result["error"])
     return result
+
+
+@router.get("/symbols/{symbol}/short-interest")
+def get_short_interest(
+    symbol: str,
+    start: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    end: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    refresh: bool = Query(False, description="Force re-fetch from FINRA"),
+) -> dict:
+    result = short_interest_payload(
+        symbol, start=start, end=end, force_refresh=refresh
+    )
+    if result.get("error") and not result.get("series") and not result.get("latest"):
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@router.get("/symbols/{symbol}/peers")
+def get_peers(
+    symbol: str,
+    limit: int = Query(12, ge=3, le=40, description="Nearest same-industry peers by market cap"),
+    extra: Optional[str] = Query(
+        None, description="Comma-separated user-added peer tickers (maximum 10)"
+    ),
+    refresh: bool = Query(False, description="Bypass 15-minute peer cache"),
+) -> dict:
+    extras = extra.split(",") if extra else []
+    return compute_peer_comparison(
+        symbol,
+        limit=limit,
+        extra_symbols=extras,
+        force_refresh=refresh,
+    )
+
+
+@router.get("/symbols/{symbol}/options")
+def get_options(
+    symbol: str,
+    expiration: Optional[str] = Query(None, description="YYYY-MM-DD; defaults to nearest"),
+    refresh: bool = Query(False, description="Bypass 5-minute options chain cache"),
+) -> dict:
+    return options_payload(
+        symbol, expiration=expiration, full_chain=False, force_refresh=refresh
+    )
+
+
+@router.get("/symbols/{symbol}/options/chain")
+def get_options_chain(
+    symbol: str,
+    expiration: Optional[str] = Query(None, description="YYYY-MM-DD; defaults to nearest"),
+    refresh: bool = Query(False, description="Bypass 5-minute options chain cache"),
+) -> dict:
+    return options_payload(
+        symbol, expiration=expiration, full_chain=True, force_refresh=refresh
+    )
+
+
+@router.get("/symbols/{symbol}/options/contract")
+def get_options_contract(
+    symbol: str,
+    contract: str = Query(..., description="OCC option contract symbol"),
+    period: str = Query("3mo", description="History window: 1mo, 3mo, 6mo, 1y, ytd, max"),
+    side: Optional[str] = Query(None),
+    strike: Optional[float] = Query(None),
+    day_low: Optional[float] = Query(None),
+    day_high: Optional[float] = Query(None),
+    refresh: bool = Query(False),
+) -> dict:
+    return options_contract_payload(
+        symbol,
+        contract,
+        period=period,
+        side=side,
+        strike=strike,
+        day_low=day_low,
+        day_high=day_high,
+        force_refresh=refresh,
+    )
 
 
 @router.get("/screen")

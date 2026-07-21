@@ -80,3 +80,44 @@ def fetch_yfinance_earnings_events(symbol: str, limit: int = 100) -> pd.DataFram
     return events[
         ["report_datetime", "reported_eps", "eps_estimate", "surprise_pct"]
     ].dropna(subset=["report_datetime"])
+
+
+def fetch_yfinance_short_snapshot(symbol: str) -> dict:
+    """
+    Point-in-time short interest enrichment from Yahoo quote summary.
+    Keys: shares_short, short_pct_float, short_ratio, shares_short_prior_month.
+    """
+    empty = {
+        "shares_short": None,
+        "short_pct_float": None,
+        "short_ratio": None,
+        "shares_short_prior_month": None,
+    }
+    try:
+        info = yf.Ticker(symbol.upper()).info or {}
+    except Exception:
+        return empty
+
+    def num(key: str):
+        v = info.get(key)
+        if v is None:
+            return None
+        try:
+            fv = float(v)
+            if fv != fv:
+                return None
+            return fv
+        except (TypeError, ValueError):
+            return None
+
+    # Yahoo sometimes returns shortPercentOfFloat as 0–1, sometimes as percent.
+    pct = num("shortPercentOfFloat")
+    if pct is not None and pct > 1.5:
+        pct = pct / 100.0
+
+    return {
+        "shares_short": num("sharesShort"),
+        "short_pct_float": pct,
+        "short_ratio": num("shortRatio"),
+        "shares_short_prior_month": num("sharesShortPriorMonth"),
+    }

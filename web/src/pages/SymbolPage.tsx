@@ -6,6 +6,8 @@ import {
   fetchFundamentals,
   fetchHistory,
   fetchMetrics,
+  fetchPeers,
+  fetchShortInterest,
   fetchTechnicals,
   fetchValuationHistory,
 } from "../api/client";
@@ -19,14 +21,19 @@ import {
   useFundamentals,
   useHistory,
   useMetrics,
+  usePeers,
+  useShortInterest,
   useTechnicals,
   useValuationHistory,
 } from "../api/hooks";
 import { DateRangeControls } from "../components/DateRangeControls";
 import { FundamentalsPanel } from "../components/FundamentalsPanel";
 import { MetricStrip } from "../components/MetricStrip";
+import { OptionsSummaryPanel } from "../components/OptionsSummaryPanel";
+import { PeerComparisonPanel } from "../components/PeerComparisonPanel";
 import { PriceChart } from "../components/PriceChart";
 import { SectionRangeControls } from "../components/SectionRangeControls";
+import { ShortInterestPanel } from "../components/ShortInterestPanel";
 import { TechnicalsPanel } from "../components/TechnicalsPanel";
 import { ValuationHistoryPanel } from "../components/ValuationHistoryPanel";
 import { useSectionRange } from "../hooks/useSectionRange";
@@ -43,6 +50,7 @@ export function SymbolPage() {
   }));
   const [benchmark, setBenchmark] = useState("SPY");
   const [benchDraft, setBenchDraft] = useState("SPY");
+  const [customPeers, setCustomPeers] = useState<string[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const qc = useQueryClient();
 
@@ -57,6 +65,7 @@ export function SymbolPage() {
 
   const priceRange = useSectionRange(globalSelection);
   const valuationRange = useSectionRange(globalSelection);
+  const shortInterestRange = useSectionRange(globalSelection);
   const technicalsRange = useSectionRange(globalSelection);
 
   const history = useHistory(symbol, priceRange.bounds);
@@ -64,13 +73,17 @@ export function SymbolPage() {
   const technicals = useTechnicals(symbol, technicalsRange.bounds);
   const fundamentals = useFundamentals(symbol);
   const valuation = useValuationHistory(symbol, valuationRange.bounds);
+  const shortInterest = useShortInterest(symbol, shortInterestRange.bounds);
+  const peers = usePeers(symbol, 12, customPeers);
 
   const error =
     history.error ||
     metrics.error ||
     technicals.error ||
     fundamentals.error ||
-    valuation.error;
+    valuation.error ||
+    shortInterest.error ||
+    peers.error;
 
   function selectPreset(next: RangePreset) {
     setMode("preset");
@@ -116,6 +129,12 @@ export function SymbolPage() {
           end: valuationRange.bounds.end,
           refresh: true,
         }),
+        fetchShortInterest(symbol, {
+          start: shortInterestRange.bounds.start,
+          end: shortInterestRange.bounds.end,
+          refresh: true,
+        }),
+        fetchPeers(symbol, { extra: customPeers, refresh: true }),
       ]);
       await Promise.all([
         qc.invalidateQueries({ queryKey: ["history", symbol] }),
@@ -123,6 +142,8 @@ export function SymbolPage() {
         qc.invalidateQueries({ queryKey: ["technicals", symbol] }),
         qc.invalidateQueries({ queryKey: ["fundamentals", symbol] }),
         qc.invalidateQueries({ queryKey: ["valuation-history", symbol] }),
+        qc.invalidateQueries({ queryKey: ["short-interest", symbol] }),
+        qc.invalidateQueries({ queryKey: ["peers", symbol] }),
       ]);
     } finally {
       setRefreshing(false);
@@ -231,6 +252,31 @@ export function SymbolPage() {
           />
         }
       />
+
+      <ShortInterestPanel
+        data={shortInterest.data}
+        loading={shortInterest.isLoading}
+        rangeControls={
+          <SectionRangeControls
+            label="Short interest"
+            selection={shortInterestRange.selection}
+            isOverridden={shortInterestRange.isOverridden}
+            onPreset={shortInterestRange.selectPreset}
+            onCustomMode={shortInterestRange.selectCustomMode}
+            onCustomChange={shortInterestRange.setCustom}
+            onFollowGlobal={shortInterestRange.followGlobal}
+          />
+        }
+      />
+
+      <PeerComparisonPanel
+        data={peers.data}
+        loading={peers.isLoading}
+        customPeers={customPeers}
+        onCustomPeersChange={setCustomPeers}
+      />
+
+      <OptionsSummaryPanel symbol={symbol} />
 
       <div className="two-col">
         <TechnicalsPanel

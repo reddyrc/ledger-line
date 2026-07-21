@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Any, Iterator, Optional
 
 import pandas as pd
 
@@ -60,6 +61,18 @@ CREATE TABLE IF NOT EXISTS earnings_events (
     PRIMARY KEY (symbol, report_datetime)
 );
 
+CREATE TABLE IF NOT EXISTS short_interest (
+    symbol TEXT NOT NULL,
+    settlement_date TEXT NOT NULL,
+    shares_short REAL,
+    shares_short_prior REAL,
+    change_pct REAL,
+    avg_daily_volume REAL,
+    days_to_cover REAL,
+    source TEXT NOT NULL DEFAULT 'finra',
+    PRIMARY KEY (symbol, settlement_date)
+);
+
 CREATE TABLE IF NOT EXISTS screen_snapshots (
     ticker TEXT PRIMARY KEY,
     name TEXT,
@@ -79,12 +92,42 @@ CREATE TABLE IF NOT EXISTS screen_snapshots (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS peer_cache (
+    cache_key TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    peer_limit INTEGER NOT NULL,
+    peer_basis TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS options_chain_cache (
+    cache_key TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    expiration TEXT NOT NULL,
+    spot REAL,
+    payload_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS options_contract_cache (
+    cache_key TEXT PRIMARY KEY,
+    contract_symbol TEXT NOT NULL,
+    period TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_ohlcv_symbol ON ohlcv(symbol);
 CREATE INDEX IF NOT EXISTS idx_fund_ticker ON fundamentals(ticker);
 CREATE INDEX IF NOT EXISTS idx_earnings_symbol ON earnings_events(symbol);
+CREATE INDEX IF NOT EXISTS idx_short_interest_symbol ON short_interest(symbol);
 CREATE INDEX IF NOT EXISTS idx_macro_series ON macro_series(series_id);
 CREATE INDEX IF NOT EXISTS idx_screen_sector ON screen_snapshots(sector);
 CREATE INDEX IF NOT EXISTS idx_screen_pe ON screen_snapshots(pe);
+CREATE INDEX IF NOT EXISTS idx_peer_cache_symbol ON peer_cache(symbol);
+CREATE INDEX IF NOT EXISTS idx_options_chain_symbol ON options_chain_cache(symbol);
+CREATE INDEX IF NOT EXISTS idx_options_contract_symbol ON options_contract_cache(contract_symbol);
 """
 
 
@@ -360,6 +403,61 @@ def load_earnings_events(symbol: str) -> pd.DataFrame:
     return df
 
 
+def upsert_short_interest(rows: list[tuple]) -> int:
+    """
+    rows: (symbol, settlement_date, shares_short, shares_short_prior,
+           change_pct, avg_daily_volume, days_to_cover, source)
+    """
+    if not rows:
+        return 0
+    with get_conn() as conn:
+        conn.executemany(
+            """
+            INSERT INTO short_interest(
+                symbol, settlement_date, shares_short, shares_short_prior,
+                change_pct, avg_daily_volume, days_to_cover, source
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(symbol, settlement_date) DO UPDATE SET
+                shares_short=excluded.shares_short,
+                shares_short_prior=excluded.shares_short_prior,
+                change_pct=excluded.change_pct,
+                avg_daily_volume=excluded.avg_daily_volume,
+                days_to_cover=excluded.days_to_cover,
+                source=excluded.source
+            """,
+            rows,
+        )
+    return len(rows)
+
+
+def load_short_interest(
+    symbol: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> pd.DataFrame:
+    clauses = ["symbol = ?"]
+    params: list = [symbol.upper()]
+    if start:
+        clauses.append("settlement_date >= ?")
+        params.append(start)
+    if end:
+        clauses.append("settlement_date <= ?")
+        params.append(end)
+    sql = f"""
+        SELECT settlement_date, shares_short, shares_short_prior, change_pct,
+               avg_daily_volume, days_to_cover, source
+        FROM short_interest
+        WHERE {' AND '.join(clauses)}
+        ORDER BY settlement_date
+    """
+    with get_conn() as conn:
+        df = pd.read_sql_query(sql, conn, params=params)
+    if not df.empty:
+        df["settlement_date"] = pd.to_datetime(df["settlement_date"], errors="coerce")
+    return df
+
+
 def upsert_screen_snapshot(row: dict) -> None:
     now = datetime.now(timezone.utc).isoformat()
     with get_conn() as conn:
@@ -411,6 +509,20 @@ def count_screen_snapshots() -> int:
     with get_conn() as conn:
         row = conn.execute("SELECT COUNT(*) AS n FROM screen_snapshots").fetchone()
         return int(row["n"]) if row else 0
+
+
+def get_screen_snapshot(ticker: str) -> Optional[dict]:
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT ticker, name, sector, price, market_cap, pe, pb, ps, roe, net_margin,
+                   momentum_3m, momentum_12m, vol_ann, max_drawdown_1y, error, updated_at
+            FROM screen_snapshots
+            WHERE ticker = ?
+            """,
+            (ticker.upper(),),
+        ).fetchone()
+        return dict(row) if row else None
 
 
 def query_screen_snapshots(
@@ -498,6 +610,176 @@ def list_screen_sectors() -> list[str]:
             """
         ).fetchall()
         return [r["sector"] for r in rows]
+
+
+def upsert_peer_cache(
+    cache_key: str,
+    *,
+    symbol: str,
+    peer_limit: int,
+    peer_basis: str,
+    payload: dict[str, Any],
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO peer_cache(cache_key, symbol, peer_limit, peer_basis, payload_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(cache_key) DO UPDATE SET
+                symbol=excluded.symbol,
+                peer_limit=excluded.peer_limit,
+                peer_basis=excluded.peer_basis,
+                payload_json=excluded.payload_json,
+                updated_at=excluded.updated_at
+            """,
+            (
+                cache_key,
+                symbol.upper(),
+                int(peer_limit),
+                peer_basis,
+                json.dumps(payload),
+                now,
+            ),
+        )
+
+
+def get_peer_cache(cache_key: str) -> Optional[dict[str, Any]]:
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT cache_key, symbol, peer_limit, peer_basis, payload_json, updated_at
+            FROM peer_cache
+            WHERE cache_key = ?
+            """,
+            (cache_key,),
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            payload = json.loads(row["payload_json"])
+        except json.JSONDecodeError:
+            return None
+        return {
+            "cache_key": row["cache_key"],
+            "symbol": row["symbol"],
+            "peer_limit": int(row["peer_limit"]),
+            "peer_basis": row["peer_basis"],
+            "payload": payload,
+            "updated_at": datetime.fromisoformat(row["updated_at"]),
+        }
+
+
+def upsert_options_chain_cache(
+    cache_key: str,
+    *,
+    symbol: str,
+    expiration: str,
+    spot: Optional[float],
+    payload: dict[str, Any],
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO options_chain_cache(cache_key, symbol, expiration, spot, payload_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(cache_key) DO UPDATE SET
+                symbol=excluded.symbol,
+                expiration=excluded.expiration,
+                spot=excluded.spot,
+                payload_json=excluded.payload_json,
+                updated_at=excluded.updated_at
+            """,
+            (
+                cache_key,
+                symbol.upper(),
+                expiration,
+                spot,
+                json.dumps(payload),
+                now,
+            ),
+        )
+
+
+def get_options_chain_cache(cache_key: str) -> Optional[dict[str, Any]]:
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT cache_key, symbol, expiration, spot, payload_json, updated_at
+            FROM options_chain_cache
+            WHERE cache_key = ?
+            """,
+            (cache_key,),
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            payload = json.loads(row["payload_json"])
+        except json.JSONDecodeError:
+            return None
+        return {
+            "cache_key": row["cache_key"],
+            "symbol": row["symbol"],
+            "expiration": row["expiration"],
+            "spot": row["spot"],
+            "payload": payload,
+            "updated_at": datetime.fromisoformat(row["updated_at"]),
+        }
+
+
+def upsert_options_contract_cache(
+    cache_key: str,
+    *,
+    contract_symbol: str,
+    period: str,
+    payload: dict[str, Any],
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO options_contract_cache(cache_key, contract_symbol, period, payload_json, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(cache_key) DO UPDATE SET
+                contract_symbol=excluded.contract_symbol,
+                period=excluded.period,
+                payload_json=excluded.payload_json,
+                updated_at=excluded.updated_at
+            """,
+            (
+                cache_key,
+                contract_symbol.upper(),
+                period,
+                json.dumps(payload),
+                now,
+            ),
+        )
+
+
+def get_options_contract_cache(cache_key: str) -> Optional[dict[str, Any]]:
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT cache_key, contract_symbol, period, payload_json, updated_at
+            FROM options_contract_cache
+            WHERE cache_key = ?
+            """,
+            (cache_key,),
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            payload = json.loads(row["payload_json"])
+        except json.JSONDecodeError:
+            return None
+        return {
+            "cache_key": row["cache_key"],
+            "contract_symbol": row["contract_symbol"],
+            "period": row["period"],
+            "payload": payload,
+            "updated_at": datetime.fromisoformat(row["updated_at"]),
+        }
 
 
 def _f(v) -> Optional[float]:

@@ -7,10 +7,15 @@ import {
   fetchMacroList,
   fetchMacroSeries,
   fetchMetrics,
+  fetchOptions,
+  fetchOptionsChain,
+  fetchOptionsContract,
+  fetchPeers,
   fetchScreen,
   fetchScreenSectors,
   fetchTechnicals,
   fetchValuationHistory,
+  fetchShortInterest,
   refreshScreen,
   type ScreenQuery,
 } from "./client";
@@ -167,6 +172,88 @@ export function useValuationHistory(symbol: string, bounds: DateBounds) {
         signal,
       ),
     enabled: Boolean(symbol),
+  });
+}
+
+export function useShortInterest(symbol: string, bounds: DateBounds) {
+  return useQuery({
+    queryKey: [
+      "short-interest",
+      symbol,
+      bounds.start ?? null,
+      bounds.end ?? null,
+    ],
+    queryFn: ({ signal }) =>
+      fetchShortInterest(
+        symbol,
+        { start: bounds.start, end: bounds.end },
+        signal,
+      ),
+    enabled: Boolean(symbol),
+  });
+}
+
+export function usePeers(symbol: string, limit = 12, extra: string[] = []) {
+  return useQuery({
+    queryKey: ["peers", symbol, limit, extra],
+    queryFn: ({ signal }) => fetchPeers(symbol, { limit, extra }, signal),
+    enabled: Boolean(symbol),
+  });
+}
+
+export function useOptions(symbol: string, expiration?: string) {
+  return useQuery({
+    queryKey: ["options", symbol, expiration ?? null],
+    queryFn: ({ signal }) =>
+      fetchOptions(symbol, { expiration }, signal),
+    enabled: Boolean(symbol),
+  });
+}
+
+export function useOptionsChain(symbol: string, expiration?: string) {
+  return useQuery({
+    queryKey: ["options-chain", symbol, expiration ?? null],
+    queryFn: ({ signal }) =>
+      fetchOptionsChain(symbol, { expiration }, signal),
+    enabled: Boolean(symbol),
+  });
+}
+
+export function useOptionsContract(
+  symbol: string,
+  opts: {
+    contract?: string | null;
+    period?: string;
+    side?: string;
+    strike?: number | null;
+    day_low?: number | null;
+    day_high?: number | null;
+  },
+) {
+  const contract = opts.contract ?? "";
+  return useQuery({
+    queryKey: [
+      "options-contract",
+      symbol,
+      contract,
+      opts.period ?? "3mo",
+      opts.side ?? null,
+      opts.strike ?? null,
+    ],
+    queryFn: ({ signal }) =>
+      fetchOptionsContract(
+        symbol,
+        {
+          contract,
+          period: opts.period,
+          side: opts.side,
+          strike: opts.strike ?? undefined,
+          day_low: opts.day_low ?? undefined,
+          day_high: opts.day_high ?? undefined,
+        },
+        signal,
+      ),
+    enabled: Boolean(symbol && contract),
   });
 }
 
