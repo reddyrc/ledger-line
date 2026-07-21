@@ -46,3 +46,37 @@ def fetch_yfinance_ohlcv(
     return hist[["date", "open", "high", "low", "close", "adj_close", "volume"]].dropna(
         subset=["close"]
     )
+
+
+def fetch_yfinance_earnings_events(symbol: str, limit: int = 100) -> pd.DataFrame:
+    """Fetch historical earnings report timestamps and reported/estimated EPS."""
+    events = yf.Ticker(symbol.upper()).get_earnings_dates(limit=limit)
+    if events is None or events.empty:
+        return pd.DataFrame(
+            columns=[
+                "report_datetime",
+                "reported_eps",
+                "eps_estimate",
+                "surprise_pct",
+            ]
+        )
+
+    events = events.reset_index()
+    date_col = "Earnings Date" if "Earnings Date" in events.columns else events.columns[0]
+    events = events.rename(
+        columns={
+            date_col: "report_datetime",
+            "Reported EPS": "reported_eps",
+            "EPS Estimate": "eps_estimate",
+            "Surprise(%)": "surprise_pct",
+        }
+    )
+    events["report_datetime"] = pd.to_datetime(
+        events["report_datetime"], utc=True, errors="coerce"
+    ).dt.tz_convert("America/New_York").dt.tz_localize(None)
+    for col in ("reported_eps", "eps_estimate", "surprise_pct"):
+        if col not in events.columns:
+            events[col] = None
+    return events[
+        ["report_datetime", "reported_eps", "eps_estimate", "surprise_pct"]
+    ].dropna(subset=["report_datetime"])

@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from finance_app.metrics.valuation_history import (  # noqa: E402
+    _forward_returns,
     _summary_stats,
     _ttm_from_flow,
     compute_valuation_history,
@@ -117,3 +118,135 @@ def test_compute_valuation_history_synthetic(tmp_path, monkeypatch):
     assert abs(result["summary"]["pe"]["median"] - 20.0) < 1e-6
     assert len(result["earnings"]) >= 1
     assert result["earnings"][0]["eps"] == 5.0
+    e0 = result["earnings"][0]
+    assert e0["anchor"] is None
+    assert e0["report_date"] is None
+    assert e0["filed"] is None
+    # Never calculate returns from fiscal period end.
+    assert e0["ret_1d"] is None
+    assert e0["ret_3d"] is None
+    assert e0["ret_5d"] is None
+    assert e0["ret_1m"] is None
+
+
+def test_forward_returns_horizons():
+    dates = pd.bdate_range("2024-01-02", periods=30)
+    # Price rises +1 each day: 100, 101, 102, ...
+    prices = pd.DataFrame(
+        {
+            "date": dates,
+            "price": [100.0 + i for i in range(len(dates))],
+        }
+    )
+    # Event on the 3rd trading day (index 2). Pre-event close = index 1 = 101.
+    event = dates[2]
+    rets = _forward_returns(prices, event)
+    # +1d → index 2 = 102 → (102/101)-1
+    assert abs(rets["ret_1d"] - (102 / 101 - 1)) < 1e-6
+    # +3d → index 4 = 104
+    assert abs(rets["ret_3d"] - (104 / 101 - 1)) < 1e-6
+    # +5d → index 6 = 106
+    assert abs(rets["ret_5d"] - (106 / 101 - 1)) < 1e-6
+    # +1m (21) → index 22 = 122
+    assert abs(rets["ret_1m"] - (122 / 101 - 1)) < 1e-6
+
+
+def test_earnings_uses_actual_report_date(tmp_path, monkeypatch):
+    import finance_app.config as cfg
+    import finance_app.db as db
+    from finance_app.config import Settings
+
+    db_path = tmp_path / "val_report.db"
+    monkeypatch.setenv("DATABASE_PATH", str(db_path))
+    cfg.get_settings.cache_clear()
+    monkeypatch.setattr(cfg, "get_settings", lambda: Settings(database_path=str(db_path)))
+    db.init_db()
+
+    dates = pd.bdate_range("2023-01-03", periods=80)
+    # Jump +10% on a before-market earnings report date.
+    prices = []
+    for d in dates:
+        p = 100.0
+        if d >= pd.Timestamp("2023-02-01"):
+            p = 110.0
+        prices.append(p)
+    ohlcv = pd.DataFrame(
+        {
+            "date": dates,
+            "open": prices,
+            "high": prices,
+            "low": prices,
+            "close": prices,
+            "adj_close": prices,
+            "volume": 1_000_000,
+        }
+    )
+    db.upsert_ohlcv(ohlcv, "TEST", source="unit")
+
+    rows = [
+        (
+            "0000000001",
+            "TEST",
+            "EPS",
+            "2022-12-31",
+            5.0,
+            "USD/shares",
+            "10-K",
+            2022,
+            "FY",
+            "2023-02-10",
+        ),
+        (
+            "0000000001",
+            "TEST",
+            "Equity",
+            "2022-12-31",
+            50_000_000_000.0,
+            "USD",
+            "10-K",
+            2022,
+            "FY",
+            "2023-02-10",
+        ),
+        (
+            "0000000001",
+            "TEST",
+            "Revenue",
+            "2022-12-31",
+            100_000_000_000.0,
+            "USD",
+            "10-K",
+            2022,
+            "FY",
+            "2023-02-10",
+        ),
+        (
+            "0000000001",
+            "TEST",
+            "Shares",
+            "2022-12-31",
+            1_000_000_000.0,
+            "shares",
+            "10-K",
+            2022,
+            "FY",
+            "2023-02-10",
+        ),
+    ]
+    db.upsert_fundamentals(rows)
+    db.upsert_earnings_events(
+        "TEST",
+        [("2023-02-01T08:00:00", 5.0, 4.8, 4.1667)],
+    )
+
+    result = compute_valuation_history("TEST", refresh=False)
+    assert not result.get("error"), result.get("error")
+    e0 = result["earnings"][0]
+    assert e0["anchor"] == "report_date"
+    assert e0["report_date"] == "2023-02-01"
+    assert e0["filed"] == "2023-02-10"
+    # Pre-report close 100 → report-day close 110 → +10%.
+    assert abs(e0["ret_1d"] - 0.1) < 1e-6
+    assert abs(e0["ret_3d"] - 0.1) < 1e-6
+    assert abs(e0["ret_5d"] - 0.1) < 1e-6
+    assert abs(e0["ret_1m"] - 0.1) < 1e-6

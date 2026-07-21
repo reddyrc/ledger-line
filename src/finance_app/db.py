@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS fundamentals (
     form TEXT,
     fy INTEGER,
     fp TEXT,
+    filed TEXT,
     PRIMARY KEY (cik, concept, end_date, form)
 );
 
@@ -48,6 +49,15 @@ CREATE TABLE IF NOT EXISTS macro_series (
     date TEXT NOT NULL,
     value REAL,
     PRIMARY KEY (series_id, date)
+);
+
+CREATE TABLE IF NOT EXISTS earnings_events (
+    symbol TEXT NOT NULL,
+    report_datetime TEXT NOT NULL,
+    reported_eps REAL,
+    eps_estimate REAL,
+    surprise_pct REAL,
+    PRIMARY KEY (symbol, report_datetime)
 );
 
 CREATE TABLE IF NOT EXISTS screen_snapshots (
@@ -71,6 +81,7 @@ CREATE TABLE IF NOT EXISTS screen_snapshots (
 
 CREATE INDEX IF NOT EXISTS idx_ohlcv_symbol ON ohlcv(symbol);
 CREATE INDEX IF NOT EXISTS idx_fund_ticker ON fundamentals(ticker);
+CREATE INDEX IF NOT EXISTS idx_earnings_symbol ON earnings_events(symbol);
 CREATE INDEX IF NOT EXISTS idx_macro_series ON macro_series(series_id);
 CREATE INDEX IF NOT EXISTS idx_screen_sector ON screen_snapshots(sector);
 CREATE INDEX IF NOT EXISTS idx_screen_pe ON screen_snapshots(pe);
@@ -89,7 +100,15 @@ def _connect(db_path: Optional[Path] = None) -> sqlite3.Connection:
 def init_db(db_path: Optional[Path] = None) -> None:
     with _connect(db_path) as conn:
         conn.executescript(SCHEMA)
+        _migrate_fundamentals_filed(conn)
         conn.commit()
+
+
+def _migrate_fundamentals_filed(conn: sqlite3.Connection) -> None:
+    """Add filed column to existing fundamentals tables created before this field existed."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(fundamentals)").fetchall()}
+    if "filed" not in cols:
+        conn.execute("ALTER TABLE fundamentals ADD COLUMN filed TEXT")
 
 
 @contextmanager
@@ -255,24 +274,32 @@ def load_macro(
 
 
 def upsert_fundamentals(rows: list[tuple]) -> int:
-    """rows: (cik, ticker, concept, end_date, value, unit, form, fy, fp)"""
+    """rows: (cik, ticker, concept, end_date, value, unit, form, fy, fp, filed)"""
     if not rows:
         return 0
+    # Accept legacy 9-tuples (no filed) from older callers/tests.
+    normalized: list[tuple] = []
+    for row in rows:
+        if len(row) == 9:
+            normalized.append((*row, None))
+        else:
+            normalized.append(row)
     with get_conn() as conn:
         conn.executemany(
             """
-            INSERT INTO fundamentals(cik, ticker, concept, end_date, value, unit, form, fy, fp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO fundamentals(cik, ticker, concept, end_date, value, unit, form, fy, fp, filed)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(cik, concept, end_date, form) DO UPDATE SET
                 ticker=excluded.ticker,
                 value=excluded.value,
                 unit=excluded.unit,
                 fy=excluded.fy,
-                fp=excluded.fp
+                fp=excluded.fp,
+                filed=COALESCE(excluded.filed, fundamentals.filed)
             """,
-            rows,
+            normalized,
         )
-    return len(rows)
+    return len(normalized)
 
 
 def load_fundamentals(ticker: str, concepts: Optional[list[str]] = None) -> pd.DataFrame:
@@ -283,13 +310,54 @@ def load_fundamentals(ticker: str, concepts: Optional[list[str]] = None) -> pd.D
         clauses.append(f"concept IN ({placeholders})")
         params.extend(concepts)
     sql = f"""
-        SELECT cik, ticker, concept, end_date, value, unit, form, fy, fp
+        SELECT cik, ticker, concept, end_date, value, unit, form, fy, fp, filed
         FROM fundamentals
         WHERE {' AND '.join(clauses)}
         ORDER BY end_date
     """
     with get_conn() as conn:
         return pd.read_sql_query(sql, conn, params=params)
+
+
+def upsert_earnings_events(symbol: str, rows: list[tuple]) -> int:
+    """rows: (report_datetime, reported_eps, eps_estimate, surprise_pct)."""
+    if not rows:
+        return 0
+    values = [(symbol.upper(), *row) for row in rows]
+    with get_conn() as conn:
+        conn.executemany(
+            """
+            INSERT INTO earnings_events(
+                symbol, report_datetime, reported_eps, eps_estimate, surprise_pct
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(symbol, report_datetime) DO UPDATE SET
+                reported_eps=excluded.reported_eps,
+                eps_estimate=excluded.eps_estimate,
+                surprise_pct=excluded.surprise_pct
+            """,
+            values,
+        )
+    return len(values)
+
+
+def load_earnings_events(symbol: str) -> pd.DataFrame:
+    with get_conn() as conn:
+        df = pd.read_sql_query(
+            """
+            SELECT report_datetime, reported_eps, eps_estimate, surprise_pct
+            FROM earnings_events
+            WHERE symbol = ?
+            ORDER BY report_datetime
+            """,
+            conn,
+            params=[symbol.upper()],
+        )
+    if not df.empty:
+        df["report_datetime"] = pd.to_datetime(
+            df["report_datetime"], errors="coerce"
+        )
+    return df
 
 
 def upsert_screen_snapshot(row: dict) -> None:

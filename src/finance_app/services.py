@@ -154,10 +154,14 @@ def valuation_history_payload(
     end: Optional[str] = None,
     force_refresh: bool = False,
 ) -> dict[str, Any]:
-    """Ensure OHLCV + fundamentals are cached, then build valuation history."""
+    """Ensure data is cached and refresh earnings dates on every ticker load."""
     get_or_fetch_ohlcv(symbol, start=start, end=end, force_refresh=force_refresh)
     return compute_valuation_history(
-        symbol, start=start, end=end, refresh=force_refresh
+        symbol,
+        start=start,
+        end=end,
+        refresh=force_refresh,
+        refresh_earnings=True,
     )
 
 

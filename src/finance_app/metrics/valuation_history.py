@@ -7,8 +7,14 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 
-from finance_app.db import load_fundamentals, load_ohlcv
+from finance_app.db import (
+    load_earnings_events,
+    load_fundamentals,
+    load_ohlcv,
+    upsert_earnings_events,
+)
 from finance_app.ingest.edgar import ingest_fundamentals
+from finance_app.ingest.prices_yfinance import fetch_yfinance_earnings_events
 
 FILING_FORMS = {"10-K", "10-Q", "10-K/A", "10-Q/A"}
 
@@ -18,6 +24,7 @@ def compute_valuation_history(
     start: Optional[str] = None,
     end: Optional[str] = None,
     refresh: bool = False,
+    refresh_earnings: bool = False,
 ) -> dict[str, Any]:
     """
     Build daily PE / PB / PS / market-cap series by joining prices to
@@ -25,7 +32,8 @@ def compute_valuation_history(
     """
     ticker = ticker.upper()
     existing = load_fundamentals(ticker)
-    if refresh or existing.empty:
+    data_refreshed = refresh or existing.empty
+    if refresh_earnings or data_refreshed:
         try:
             ingest_fundamentals(ticker)
         except Exception as exc:
@@ -66,17 +74,26 @@ def compute_valuation_history(
             "earnings": [],
         }
 
-    asof = _build_asof_fundamentals(fund)
-    earnings = _earnings_series(fund, start=start, end=end)
+    report_events = load_earnings_events(ticker)
+    if data_refreshed:
+        try:
+            fetched_events = fetch_yfinance_earnings_events(ticker)
+            rows = [
+                (
+                    r["report_datetime"].isoformat(),
+                    _round(r.get("reported_eps")),
+                    _round(r.get("eps_estimate")),
+                    _round(r.get("surprise_pct")),
+                )
+                for _, r in fetched_events.iterrows()
+            ]
+            upsert_earnings_events(ticker, rows)
+            report_events = load_earnings_events(ticker)
+        except Exception:
+            # Earnings returns remain unavailable rather than using a false date.
+            pass
 
-    if asof.empty:
-        return {
-            "symbol": ticker,
-            "error": "Could not build fundamental as-of series",
-            "summary": {},
-            "series": [],
-            "earnings": earnings,
-        }
+    asof = _build_asof_fundamentals(fund)
 
     prices = ohlcv.copy()
     prices["date"] = pd.to_datetime(prices["date"])
@@ -87,6 +104,37 @@ def compute_valuation_history(
         else "close"
     )
     prices["price"] = prices[price_col].astype(float)
+
+    # Use full price history for post-earnings returns (needs days after range end).
+    ohlcv_full = load_ohlcv(ticker)
+    if ohlcv_full.empty:
+        ohlcv_full = ohlcv
+    prices_full = ohlcv_full.copy()
+    prices_full["date"] = pd.to_datetime(prices_full["date"])
+    prices_full = prices_full.sort_values("date")
+    full_col = (
+        "adj_close"
+        if "adj_close" in prices_full.columns and prices_full["adj_close"].notna().any()
+        else "close"
+    )
+    prices_full["price"] = prices_full[full_col].astype(float)
+
+    earnings = _earnings_series(
+        fund,
+        prices=prices_full[["date", "price"]],
+        report_events=report_events,
+        start=start,
+        end=end,
+    )
+
+    if asof.empty:
+        return {
+            "symbol": ticker,
+            "error": "Could not build fundamental as-of series",
+            "summary": {},
+            "series": [],
+            "earnings": earnings,
+        }
 
     asof = asof.sort_values("end_date")
     merged = pd.merge_asof(
@@ -158,17 +206,26 @@ def compute_valuation_history(
 
 def _concept_frame(fund: pd.DataFrame, concept: str) -> pd.DataFrame:
     g = fund[fund["concept"] == concept].copy()
+    cols = ["end_date", "value", "form", "fy", "fp", "filed"]
+    empty = pd.DataFrame(columns=cols)
     if g.empty:
-        return pd.DataFrame(columns=["end_date", "value", "form", "fy", "fp"])
+        return empty
     g["end_date"] = pd.to_datetime(g["end_date"])
+    if "filed" not in g.columns:
+        g["filed"] = None
     # Prefer standard filings
     g = g[g["form"].isin(FILING_FORMS) | g["form"].isna()]
     if g.empty:
         g = fund[fund["concept"] == concept].copy()
         g["end_date"] = pd.to_datetime(g["end_date"])
+        if "filed" not in g.columns:
+            g["filed"] = None
     g = g.sort_values(["end_date", "form"])
     g = g.drop_duplicates(subset=["end_date"], keep="last")
-    return g[["end_date", "value", "form", "fy", "fp"]].reset_index(drop=True)
+    for c in cols:
+        if c not in g.columns:
+            g[c] = None
+    return g[cols].reset_index(drop=True)
 
 
 def _is_quarterly(row: pd.Series) -> bool:
@@ -281,8 +338,56 @@ def _build_asof_fundamentals(fund: pd.DataFrame) -> pd.DataFrame:
     return base
 
 
+def _forward_returns(
+    prices: pd.DataFrame,
+    event_date: pd.Timestamp,
+) -> dict[str, Optional[float]]:
+    """
+    Return from last close before event_date to the Nth trading day after that
+    baseline close. Horizons: 1d, 3d, 5d, 1m (21 trading days).
+    """
+    empty = {"ret_1d": None, "ret_3d": None, "ret_5d": None, "ret_1m": None}
+    if prices is None or prices.empty or pd.isna(event_date):
+        return empty
+    px = prices.sort_values("date").reset_index(drop=True).copy()
+    px["date"] = pd.to_datetime(px["date"]).dt.normalize()
+    event_date = pd.Timestamp(event_date)
+    event_day = event_date.normalize()
+
+    # Yahoo timestamps are New York local time. Before-market reports use the
+    # previous close; reports at noon or later use that day's close as baseline.
+    if event_date.hour < 12:
+        before = px[px["date"] < event_day]
+    else:
+        before = px[px["date"] <= event_day]
+    if before.empty:
+        return empty
+    base_idx = int(before.index[-1])
+    base_price = float(before.iloc[-1]["price"])
+    if base_price == 0 or np.isnan(base_price):
+        return empty
+
+    def ret_at(n: int) -> Optional[float]:
+        j = base_idx + n
+        if j >= len(px):
+            return None
+        p = float(px.iloc[j]["price"])
+        if np.isnan(p):
+            return None
+        return _round((p / base_price) - 1.0)
+
+    return {
+        "ret_1d": ret_at(1),
+        "ret_3d": ret_at(3),
+        "ret_5d": ret_at(5),
+        "ret_1m": ret_at(21),
+    }
+
+
 def _earnings_series(
     fund: pd.DataFrame,
+    prices: Optional[pd.DataFrame] = None,
+    report_events: Optional[pd.DataFrame] = None,
     start: Optional[str] = None,
     end: Optional[str] = None,
 ) -> list[dict[str, Any]]:
@@ -293,8 +398,44 @@ def _earnings_series(
         eps = eps[eps["end_date"] >= pd.to_datetime(start)]
     if end:
         eps = eps[eps["end_date"] <= pd.to_datetime(end)]
+    reports = (
+        report_events.dropna(subset=["report_datetime"])
+        .sort_values("report_datetime")
+        .reset_index(drop=True)
+        if report_events is not None and not report_events.empty
+        else pd.DataFrame()
+    )
     out = []
     for _, r in eps.iterrows():
+        filed_raw = r.get("filed")
+        filed_str = None
+        if pd.notna(filed_raw) and str(filed_raw).strip():
+            try:
+                filed_str = pd.to_datetime(filed_raw).strftime("%Y-%m-%d")
+            except (TypeError, ValueError):
+                filed_str = None
+
+        period_end = pd.Timestamp(r["end_date"])
+        report_datetime = None
+        if not reports.empty:
+            candidates = reports[
+                (reports["report_datetime"] > period_end)
+                & (reports["report_datetime"] <= period_end + pd.Timedelta(days=120))
+            ]
+            if not candidates.empty:
+                report_datetime = pd.Timestamp(candidates.iloc[0]["report_datetime"])
+
+        rets = (
+            _forward_returns(prices, report_datetime)
+            if prices is not None and report_datetime is not None
+            else {
+            "ret_1d": None,
+            "ret_3d": None,
+            "ret_5d": None,
+            "ret_1m": None,
+            }
+        )
+
         out.append(
             {
                 "date": r["end_date"].strftime("%Y-%m-%d"),
@@ -302,6 +443,17 @@ def _earnings_series(
                 "form": r["form"],
                 "fy": int(r["fy"]) if pd.notna(r.get("fy")) else None,
                 "fp": r["fp"] if pd.notna(r.get("fp")) else None,
+                "filed": filed_str,
+                "report_datetime": (
+                    report_datetime.isoformat() if report_datetime is not None else None
+                ),
+                "report_date": (
+                    report_datetime.strftime("%Y-%m-%d")
+                    if report_datetime is not None
+                    else None
+                ),
+                "anchor": "report_date" if report_datetime is not None else None,
+                **rets,
             }
         )
     return out

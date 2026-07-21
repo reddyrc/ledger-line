@@ -94,7 +94,7 @@ def parse_company_facts(
 ) -> list[tuple]:
     """
     Flatten companyfacts JSON into DB rows:
-    (cik, ticker, concept, end_date, value, unit, form, fy, fp)
+    (cik, ticker, concept, end_date, value, unit, form, fy, fp, filed)
     """
     cik = str(facts.get("cik", "")).zfill(10)
     us_gaap = facts.get("facts", {}).get("us-gaap", {})
@@ -132,6 +132,7 @@ def parse_company_facts(
             val = obs.get("val")
             if end is None or val is None:
                 continue
+            filed = obs.get("filed")
             rows.append(
                 (
                     cik,
@@ -143,6 +144,7 @@ def parse_company_facts(
                     obs.get("form"),
                     obs.get("fy"),
                     obs.get("fp"),
+                    filed if filed else None,
                 )
             )
     return rows

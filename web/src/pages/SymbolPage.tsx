@@ -42,6 +42,7 @@ export function SymbolPage() {
     end: todayISO(),
   }));
   const [benchmark, setBenchmark] = useState("SPY");
+  const [benchDraft, setBenchDraft] = useState("SPY");
   const [refreshing, setRefreshing] = useState(false);
   const qc = useQueryClient();
 
@@ -143,7 +144,6 @@ export function SymbolPage() {
             {metrics.data?.metrics.source
               ? ` · ${metrics.data.metrics.source}`
               : ""}
-            {` · vs ${benchmark}`}
           </p>
         </div>
         <div className="controls">
@@ -159,11 +159,18 @@ export function SymbolPage() {
             Bench
             <input
               className="bench-input mono"
-              value={benchmark}
-              onChange={(e) =>
-                setBenchmark(normalizeTicker(e.target.value) || "SPY")
-              }
+              value={benchDraft}
+              onChange={(e) => setBenchDraft(e.target.value.toUpperCase())}
+              onBlur={() => {
+                const next = normalizeTicker(benchDraft) || "SPY";
+                setBenchDraft(next);
+                setBenchmark(next);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") e.currentTarget.blur();
+              }}
               maxLength={8}
+              placeholder="SPY"
             />
           </label>
           <button
@@ -183,7 +190,11 @@ export function SymbolPage() {
         </div>
       )}
 
-      <MetricStrip metrics={metrics.data?.metrics} loading={metrics.isLoading} />
+      <MetricStrip
+        metrics={metrics.data?.metrics}
+        loading={metrics.isLoading}
+        benchmark={benchmark}
+      />
 
       <div className="panel">
         <div className="panel-head">

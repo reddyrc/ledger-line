@@ -17,10 +17,11 @@ import {
 
 import { brushProps, useBrushZoom } from "../hooks/useBrushZoom";
 import type {
+  EarningsPoint,
   ValuationHistoryResponse,
   ValuationMetricKey,
 } from "../types/api";
-import { fmtCompact, fmtNum } from "../lib/format";
+import { fmtCompact, fmtNum, fmtPct } from "../lib/format";
 
 type Props = {
   data?: ValuationHistoryResponse;
@@ -35,9 +36,76 @@ const METRICS: Array<{ key: ValuationMetricKey; label: string }> = [
   { key: "market_cap", label: "Mkt cap" },
 ];
 
+const POST_EARNINGS_HORIZONS: Array<{
+  key: "ret_1d" | "ret_3d" | "ret_5d" | "ret_1m";
+  label: string;
+}> = [
+  { key: "ret_1d", label: "+1d" },
+  { key: "ret_3d", label: "+3d" },
+  { key: "ret_5d", label: "+5d" },
+  { key: "ret_1m", label: "+1mo" },
+];
+
 function formatMetric(key: ValuationMetricKey, v: number | null | undefined): string {
   if (key === "market_cap") return fmtCompact(v);
   return fmtNum(v);
+}
+
+function EarningsTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: Array<{ payload?: EarningsPoint }>;
+  label?: string | number;
+}) {
+  if (!active || !payload?.length) return null;
+  const row = payload[0]?.payload;
+  if (!row) return null;
+
+  const bits = [String(label ?? row.date)];
+  if (row.form) bits.push(row.form);
+  if (row.fp) bits.push(row.fp);
+
+  const reportNote = row.report_date
+    ? `After earnings report (${row.report_date})`
+    : "Earnings report date unavailable";
+
+  return (
+    <div className="earnings-tooltip">
+      <div className="earnings-tooltip-head">{bits.join(" · ")}</div>
+      <div className="earnings-tooltip-eps">
+        EPS <span className="mono">{fmtNum(row.eps, 3)}</span>
+      </div>
+      <div className="earnings-tooltip-sub muted small">{reportNote}</div>
+      <div className="earnings-tooltip-returns">
+        {POST_EARNINGS_HORIZONS.map((h) => {
+          const v = row[h.key];
+          const cls =
+            v == null
+              ? ""
+              : v > 0
+                ? "pos"
+                : v < 0
+                  ? "neg"
+                  : "";
+          return (
+            <div key={h.key} className="earnings-tooltip-row">
+              <span>{h.label}</span>
+              <span className={`mono ${cls}`}>{fmtPct(v, 1)}</span>
+            </div>
+          );
+        })}
+      </div>
+      {!row.report_date && (
+        <div className="earnings-tooltip-note muted small">
+          Returns are not calculated from the fiscal period end. Refresh to
+          retrieve the actual earnings report date.
+        </div>
+      )}
+    </div>
+  );
 }
 
 function localStats(values: Array<number | null | undefined>) {
@@ -280,7 +348,9 @@ export function ValuationHistoryPanel({ data, loading, rangeControls }: Props) {
       <div className="earnings-block">
         <div className="panel-head">
           <h4>Earnings (EPS)</h4>
-          <span className="muted small">Reported diluted EPS at period end</span>
+          <span className="muted small">
+            Diluted EPS · hover a bar for post-earnings returns
+          </span>
         </div>
         {earnings.length === 0 ? (
           <div className="empty-panel">No earnings points in range.</div>
@@ -293,6 +363,15 @@ export function ValuationHistoryPanel({ data, loading, rangeControls }: Props) {
                   eps: e.eps,
                   form: e.form,
                   fp: e.fp,
+                  fy: e.fy,
+                  filed: e.filed,
+                  report_datetime: e.report_datetime,
+                  report_date: e.report_date,
+                  anchor: e.anchor,
+                  ret_1d: e.ret_1d,
+                  ret_3d: e.ret_3d,
+                  ret_5d: e.ret_5d,
+                  ret_1m: e.ret_1m,
                 }))}
                 margin={{ top: 8, right: 12, left: 0, bottom: 0 }}
               >
@@ -313,21 +392,8 @@ export function ValuationHistoryPanel({ data, loading, rangeControls }: Props) {
                   tickFormatter={(v: number) => fmtNum(v, 2)}
                 />
                 <Tooltip
-                  contentStyle={{
-                    background: "var(--panel)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 8,
-                  }}
-                  formatter={(value) => [fmtNum(Number(value), 3), "EPS"]}
-                  labelFormatter={(label, payload) => {
-                    const row = payload?.[0]?.payload as
-                      | { form?: string; fp?: string }
-                      | undefined;
-                    const bits = [String(label)];
-                    if (row?.form) bits.push(row.form);
-                    if (row?.fp) bits.push(row.fp);
-                    return bits.join(" · ");
-                  }}
+                  content={<EarningsTooltip />}
+                  cursor={{ fill: "color-mix(in srgb, var(--accent-2) 12%, transparent)" }}
                 />
                 <Bar
                   dataKey="eps"

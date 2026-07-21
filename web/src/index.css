@@ -546,6 +546,24 @@ input {
   color: var(--danger);
 }
 
+.metric-cell-bench {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 5%, var(--panel));
+}
+
+.bench-tag {
+  display: inline-block;
+  margin-left: 0.3rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -834,6 +852,56 @@ input {
 
 .earnings-block .panel-head {
   margin-bottom: 0.5rem;
+}
+
+.earnings-tooltip {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.65rem 0.8rem;
+  box-shadow: var(--shadow);
+  min-width: 11rem;
+}
+
+.earnings-tooltip-head {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.earnings-tooltip-eps {
+  font-size: 0.95rem;
+  margin-bottom: 0.45rem;
+}
+
+.earnings-tooltip-sub {
+  margin-bottom: 0.35rem;
+}
+
+.earnings-tooltip-returns {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.earnings-tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.85rem;
+}
+
+.earnings-tooltip-row .pos {
+  color: var(--accent);
+}
+
+.earnings-tooltip-row .neg {
+  color: var(--danger);
+}
+
+.earnings-tooltip-note {
+  margin-top: 0.45rem;
+  max-width: 14rem;
+  line-height: 1.35;
 }
 
 @media (max-width: 900px) {

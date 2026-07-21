@@ -130,6 +130,14 @@ export type EarningsPoint = {
   form: string | null;
   fy: number | null;
   fp: string | null;
+  filed?: string | null;
+  report_datetime?: string | null;
+  report_date?: string | null;
+  anchor?: "report_date" | null;
+  ret_1d?: number | null;
+  ret_3d?: number | null;
+  ret_5d?: number | null;
+  ret_1m?: number | null;
 };
 
 export type ValuationHistoryResponse = {
