@@ -7,6 +7,11 @@ export default defineConfig({
   server: {
     port: 5180,
     strictPort: true,
+    // SEO endpoints live on the FastAPI backend; forward them in dev
+    proxy: {
+      "/sitemap.xml": "http://localhost:8000",
+      "/robots.txt": "http://localhost:8000",
+    },
   },
   preview: {
     port: 5180,

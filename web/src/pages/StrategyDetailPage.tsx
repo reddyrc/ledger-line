@@ -13,6 +13,7 @@ import {
 
 import { useOptionStrategyDetail } from "../api/hooks";
 import { fmtCompact, fmtNum, fmtPct, normalizeTicker } from "../lib/format";
+import { useSeo } from "../lib/seo";
 import { OPTION_TIPS } from "../lib/optionsGlossary";
 import { sizeStrategy } from "../lib/strategySizing";
 
@@ -30,6 +31,7 @@ function money(n: number | null | undefined): string {
 export function StrategyDetailPage() {
   const { symbol: raw, ideaId = "" } = useParams();
   const symbol = normalizeTicker(raw ?? "");
+  useSeo(`${symbol} option strategy detail`);
   const [params] = useSearchParams();
   const expiration = params.get("expiration") ?? undefined;
 

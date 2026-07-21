@@ -803,6 +803,24 @@ def upsert_earnings_analysis_snapshot(symbol: str, payload: dict[str, Any]) -> N
         )
 
 
+def list_known_symbols(limit: int = 500) -> list[str]:
+    """Distinct symbols with cached data (for sitemap)."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT symbol FROM (
+                SELECT DISTINCT symbol FROM ohlcv
+                UNION
+                SELECT DISTINCT ticker AS symbol FROM screen_snapshots
+            )
+            ORDER BY symbol
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [str(r["symbol"]) for r in rows if r["symbol"]]
+
+
 def load_earnings_analysis_snapshot(symbol: str) -> Optional[dict[str, Any]]:
     with get_conn() as conn:
         row = conn.execute(

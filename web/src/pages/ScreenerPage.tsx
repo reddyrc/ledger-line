@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import type { ScreenQuery } from "../api/client";
 import { useRefreshScreen, useScreen, useScreenSectors } from "../api/hooks";
 import { fmtCompact, fmtNum, fmtPct, fmtPrice } from "../lib/format";
+import { useSeo } from "../lib/seo";
 
 type SortKey =
   | "ticker"
@@ -27,6 +28,10 @@ function parseOptionalNumber(raw: string): number | undefined {
 }
 
 export function ScreenerPage() {
+  useSeo(
+    "Stock screener — value & momentum filters",
+    "Screen US stocks by P/E, P/B, P/S, ROE, momentum, volatility, and drawdown using free fundamental and price data.",
+  );
   const [q, setQ] = useState("");
   const [sector, setSector] = useState("");
   const [peMax, setPeMax] = useState("");

@@ -17,6 +17,7 @@ import { IvHistoryPanel } from "../components/IvHistoryPanel";
 import { StrategyIdeasPanel } from "../components/StrategyIdeasPanel";
 import type { OptionContract } from "../types/api";
 import { fmtNum, fmtPct, fmtPrice, normalizeTicker } from "../lib/format";
+import { useSeo } from "../lib/seo";
 import { OPTION_TIPS } from "../lib/optionsGlossary";
 
 type Selected = {
@@ -63,6 +64,10 @@ function historyBounds(period: string): DateBounds {
 export function OptionsPage() {
   const { symbol: raw } = useParams();
   const symbol = normalizeTicker(raw ?? "");
+  useSeo(
+    `${symbol} options chain, implied volatility & strategy ideas`,
+    `${symbol} options analytics: chain by expiration, ATM IV with IV rank, expected move, max pain, unusual activity, IV vs HV history, and heuristic strategy ideas.`,
+  );
   const [expiration, setExpiration] = useState<string | undefined>(undefined);
   const [selected, setSelected] = useState<Selected | null>(null);
   const [period, setPeriod] = useState("3mo");

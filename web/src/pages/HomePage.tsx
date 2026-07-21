@@ -1,10 +1,12 @@
 import { Link } from "react-router-dom";
 
 import { TickerSearch } from "../components/TickerSearch";
+import { useSeo } from "../lib/seo";
 
 const SUGGESTIONS = ["INTC", "AAPL", "MSFT", "NVDA", "SPY", "QQQ"];
 
 export function HomePage() {
+  useSeo();
   return (
     <section className="hero">
       <div className="hero-atmosphere" aria-hidden />

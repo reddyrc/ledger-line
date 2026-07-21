@@ -25,6 +25,8 @@ class Settings(BaseSettings):
         "http://localhost:5180,http://127.0.0.1:5180,"
         "http://localhost:4173,http://127.0.0.1:4173"
     )
+    # Canonical site origin for SEO (sitemap, canonical URLs), e.g. https://ledgerline.app
+    public_base_url: str = ""
 
     @property
     def db_path(self) -> Path:

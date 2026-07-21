@@ -2,8 +2,13 @@ import { useMemo, useState } from "react";
 
 import { useBootstrapMacro, useMacroList, useMacroSeries } from "../api/hooks";
 import { MacroChart } from "../components/MacroChart";
+import { useSeo } from "../lib/seo";
 
 export function MacroPage() {
+  useSeo(
+    "Macro dashboard — rates & economic series",
+    "FRED macro series alongside equity metrics: Treasury yields, inflation, and more.",
+  );
   const list = useMacroList();
   const seriesMap = list.data?.series ?? {};
   const ids = useMemo(() => Object.keys(seriesMap).sort(), [seriesMap]);

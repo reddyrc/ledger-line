@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import { useEarningsCalendar } from "../api/hooks";
 import { fmtCompact, fmtNum, fmtPct, fmtPrice, normalizeTicker } from "../lib/format";
+import { useSeo } from "../lib/seo";
 import type { EarningsCalendarEvent } from "../types/api";
 
 const DEFAULT =
@@ -35,6 +36,10 @@ function revisionLabel(ev: EarningsCalendarEvent): string {
 }
 
 export function EarningsPage() {
+  useSeo(
+    "Earnings calendar with estimates & expected moves",
+    "Upcoming earnings with EPS and revenue estimates, revision trends, historical post-earnings moves, implied volatility, and expected move context.",
+  );
   const [draft, setDraft] = useState(DEFAULT);
   const [symbols, setSymbols] = useState(() =>
     DEFAULT.split(",")

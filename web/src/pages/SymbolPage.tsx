@@ -40,6 +40,7 @@ import { TechnicalsPanel } from "../components/TechnicalsPanel";
 import { ValuationHistoryPanel } from "../components/ValuationHistoryPanel";
 import { useSectionRange } from "../hooks/useSectionRange";
 import { normalizeTicker } from "../lib/format";
+import { useSeo } from "../lib/seo";
 
 const COMPARE_KEY = "ledgerline.price.compare";
 
@@ -72,6 +73,10 @@ function writeCompareTickers(primary: string, tickers: string[]) {
 export function SymbolPage() {
   const { symbol: raw } = useParams();
   const symbol = normalizeTicker(raw ?? "");
+  useSeo(
+    `${symbol} stock metrics, valuation history & fundamentals`,
+    `${symbol} historical performance: Sharpe, volatility, drawdown, beta, P/E and valuation history, balance sheet from SEC EDGAR, short interest, and post-earnings moves.`,
+  );
   const [mode, setMode] = useState<"preset" | "custom">("preset");
   const [preset, setPreset] = useState<RangePreset>("5Y");
   const [custom, setCustom] = useState<DateBounds>(() => ({

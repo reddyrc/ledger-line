@@ -1,15 +1,16 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from finance_app import __version__
 from finance_app.api import router
 from finance_app.config import get_settings
-from finance_app.db import init_db
+from finance_app.db import init_db, list_known_symbols
+from finance_app.seo import inject_meta, robots_txt, sitemap_xml
 
 # Built React assets (Docker / production). Dev still uses Vite on :5180.
 WEB_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
@@ -63,24 +64,50 @@ def api_root() -> dict:
     }
 
 
+def _base_url(request: Request) -> str:
+    configured = get_settings().public_base_url.strip()
+    if configured:
+        return configured.rstrip("/")
+    return str(request.base_url).rstrip("/")
+
+
+@app.get("/robots.txt", response_class=PlainTextResponse)
+def robots(request: Request) -> str:
+    return robots_txt(_base_url(request))
+
+
+@app.get("/sitemap.xml")
+def sitemap(request: Request) -> Response:
+    try:
+        symbols = list_known_symbols()
+    except Exception:
+        symbols = []
+    xml = sitemap_xml(_base_url(request), symbols)
+    return Response(content=xml, media_type="application/xml")
+
+
 if WEB_DIST.is_dir():
     assets = WEB_DIST / "assets"
     if assets.is_dir():
         app.mount("/assets", StaticFiles(directory=assets), name="assets")
 
+    def _spa_html(path: str, request: Request) -> HTMLResponse:
+        index_html = (WEB_DIST / "index.html").read_text(encoding="utf-8")
+        return HTMLResponse(inject_meta(index_html, path, _base_url(request)))
+
     @app.get("/")
-    def spa_index() -> FileResponse:
-        return FileResponse(WEB_DIST / "index.html")
+    def spa_index(request: Request) -> HTMLResponse:
+        return _spa_html("/", request)
 
     @app.get("/{full_path:path}")
-    def spa_fallback(full_path: str) -> FileResponse:
+    def spa_fallback(full_path: str, request: Request) -> Response:
         # Let API / docs / OpenAPI through; serve SPA for client routes.
         if full_path.startswith(("api/", "docs", "redoc", "openapi.json", "health")):
             return FileResponse(WEB_DIST / "index.html", status_code=404)
         candidate = WEB_DIST / full_path
         if candidate.is_file():
             return FileResponse(candidate)
-        return FileResponse(WEB_DIST / "index.html")
+        return _spa_html(full_path, request)
 else:
 
     @app.get("/")

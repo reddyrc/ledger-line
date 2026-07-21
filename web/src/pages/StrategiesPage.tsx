@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { useStrategiesScan } from "../api/hooks";
 import type { StrategyIdea } from "../types/api";
 import { fmtNum, fmtPct, normalizeTicker } from "../lib/format";
+import { useSeo } from "../lib/seo";
 import { OPTION_TIPS } from "../lib/optionsGlossary";
 
 const DEFAULT_WATCHLIST =
@@ -22,6 +23,10 @@ function parseWatchlist(raw: string): string[] {
 }
 
 export function StrategiesPage() {
+  useSeo(
+    "Options strategy screener",
+    "Scan a watchlist for credit spreads, iron condors, and covered calls with liquidity filters, POP estimates, and earnings-risk annotations.",
+  );
   const [draft, setDraft] = useState(DEFAULT_WATCHLIST);
   const [watchlist, setWatchlist] = useState<string[]>(() =>
     parseWatchlist(DEFAULT_WATCHLIST),
