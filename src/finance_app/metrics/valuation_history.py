@@ -75,7 +75,7 @@ def compute_valuation_history(
         }
 
     report_events = load_earnings_events(ticker)
-    if data_refreshed:
+    if data_refreshed or refresh_earnings:
         try:
             fetched_events = fetch_yfinance_earnings_events(ticker)
             rows = [

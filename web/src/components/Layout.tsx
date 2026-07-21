@@ -15,6 +15,8 @@ export function Layout() {
           <NavLink to="/" end>
             Explore
           </NavLink>
+          <NavLink to="/strategies">Strategies</NavLink>
+          <NavLink to="/earnings">Earnings</NavLink>
           <NavLink to="/screen">Screener</NavLink>
           <NavLink to="/macro">Macro</NavLink>
         </nav>

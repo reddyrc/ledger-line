@@ -277,11 +277,48 @@ export type OptionsTotals = {
   pcr_volume: number | null;
 };
 
+export type IvTermPoint = {
+  expiration: string | null;
+  dte: number | null;
+  atm_iv: number | null;
+  expected_move?: number | null;
+};
+
+export type IvContext = {
+  atm_iv: number | null;
+  iv_rank_1y: number | null;
+  iv_percentile_1y: number | null;
+  sample_count?: number;
+  building_history?: boolean;
+  term_structure?: IvTermPoint[];
+};
+
+export type UoaRow = {
+  contract_symbol: string | null;
+  side: string;
+  strike: number | null;
+  expiration?: string | null;
+  dte?: number | null;
+  volume: number | null;
+  open_interest: number | null;
+  mid?: number | null;
+  implied_volatility?: number | null;
+  volume_oi?: number | null;
+  premium_notional?: number | null;
+  score?: number | null;
+  vs_median_vol_oi?: number | null;
+  day_low?: number | null;
+  day_high?: number | null;
+};
+
 export type OptionsSummary = {
   max_pain: number | null;
   expected_move: OptionsExpectedMove;
   totals: OptionsTotals;
   atm_strike: number | null;
+  iv_context?: IvContext | null;
+  days_to_earnings?: number | null;
+  next_earnings?: string | null;
 };
 
 export type OptionsStrikeRow = {
@@ -299,6 +336,11 @@ export type OptionsResponse = {
   preview: OptionsStrikeRow[];
   calls: OptionContract[];
   puts: OptionContract[];
+  uoa?: UoaRow[];
+  iv_context?: IvContext | null;
+  days_to_earnings?: number | null;
+  next_earnings?: string | null;
+  eps_estimate?: number | null;
   fetched_at?: string | null;
   freshness?: string;
   stale?: boolean;
@@ -332,6 +374,154 @@ export type OptionsContractResponse = {
   freshness?: string;
   stale?: boolean;
   warning?: string;
+  disclaimer?: string;
+  error?: string;
+};
+
+export type StrategyLeg = {
+  action: string;
+  right: string;
+  strike: number | null;
+  mid: number | null;
+  bid: number | null;
+  ask: number | null;
+  last: number | null;
+  implied_volatility: number | null;
+  contract_symbol: string | null;
+  open_interest?: number | null;
+  volume?: number | null;
+};
+
+export type StrategyMetrics = {
+  credit_or_debit: number | null;
+  max_profit: number | null;
+  max_loss: number | null;
+  pop_proxy: number | null;
+  edge_score: number | null;
+  spot: number | null;
+  expected_move: number | null;
+  max_pain: number | null;
+  breakevens?: number[] | null;
+  severity?: string | null;
+  residual?: number | null;
+  notes: string[];
+  liquidity?: {
+    min_oi?: number | null;
+    min_volume?: number | null;
+    max_spread_pct?: number | null;
+    ok?: boolean;
+  } | null;
+  days_to_earnings?: number | null;
+};
+
+export type StrategyIdea = {
+  id: string;
+  symbol: string;
+  family: "credit" | "debit" | "mispricing" | string;
+  kind: string;
+  title: string;
+  expiration: string;
+  legs: StrategyLeg[];
+  metrics: StrategyMetrics;
+  disclaimer?: string;
+};
+
+export type StrategiesResponse = {
+  symbol: string;
+  expiration: string | null;
+  expirations: string[];
+  spot: number | null;
+  summary?: {
+    max_pain: number | null;
+    expected_move: number | null;
+    atm_strike?: number | null;
+  };
+  ideas: StrategyIdea[];
+  iv_context?: IvContext | null;
+  days_to_earnings?: number | null;
+  next_earnings?: string | null;
+  fetched_at?: string | null;
+  freshness?: string;
+  stale?: boolean;
+  disclaimer?: string;
+  error?: string;
+};
+
+export type StrategyGreeks = {
+  delta: number | null;
+  gamma: number | null;
+  theta: number | null;
+  vega: number | null;
+  rho?: number | null;
+  source?: string;
+  legs?: Array<{
+    contract_symbol?: string | null;
+    action?: string;
+    right?: string;
+    strike?: number | null;
+    delta?: number | null;
+    gamma?: number | null;
+    theta?: number | null;
+    vega?: number | null;
+    rho?: number | null;
+    model_price?: number | null;
+  }>;
+};
+
+export type ScenarioGrid = {
+  horizon?: string;
+  note?: string;
+  spot_shocks?: number[];
+  iv_shocks?: number[];
+  grid: Array<{
+    spot_pct: number;
+    iv_pct: number;
+    pnl: number | null;
+  }>;
+};
+
+export type StrategyDetailResponse = {
+  symbol: string;
+  expiration?: string | null;
+  idea: StrategyIdea | null;
+  payoff: Array<{ spot: number | null; pnl: number | null }>;
+  greeks?: StrategyGreeks | null;
+  scenarios?: ScenarioGrid | null;
+  days_to_earnings?: number | null;
+  next_earnings?: string | null;
+  disclaimer?: string;
+  error?: string;
+};
+
+export type StrategiesScanResponse = {
+  symbols: string[];
+  ideas: StrategyIdea[];
+  errors: Array<{ symbol: string; error: string }>;
+  disclaimer?: string;
+};
+
+export type EarningsCalendarEvent = {
+  symbol: string;
+  report_datetime: string;
+  reported_eps: number | null;
+  eps_estimate: number | null;
+  surprise_pct: number | null;
+  days_to_earnings: number | null;
+};
+
+export type EarningsCalendarResponse = {
+  from: string;
+  to: string;
+  symbols: string[];
+  events: EarningsCalendarEvent[];
+  disclaimer?: string;
+};
+
+export type UoaResponse = {
+  symbol: string;
+  expiration: string | null;
+  rows: UoaRow[];
+  freshness?: string;
   disclaimer?: string;
   error?: string;
 };

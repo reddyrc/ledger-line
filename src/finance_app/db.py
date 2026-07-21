@@ -118,6 +118,28 @@ CREATE TABLE IF NOT EXISTS options_contract_cache (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS options_strategy_cache (
+    cache_key TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    expiration TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS options_iv_snapshots (
+    symbol TEXT NOT NULL,
+    as_of_date TEXT NOT NULL,
+    expiration TEXT NOT NULL,
+    dte INTEGER,
+    atm_iv REAL,
+    spot REAL,
+    call_volume REAL,
+    put_volume REAL,
+    call_oi REAL,
+    put_oi REAL,
+    PRIMARY KEY (symbol, as_of_date, expiration)
+);
+
 CREATE INDEX IF NOT EXISTS idx_ohlcv_symbol ON ohlcv(symbol);
 CREATE INDEX IF NOT EXISTS idx_fund_ticker ON fundamentals(ticker);
 CREATE INDEX IF NOT EXISTS idx_earnings_symbol ON earnings_events(symbol);
@@ -128,6 +150,8 @@ CREATE INDEX IF NOT EXISTS idx_screen_pe ON screen_snapshots(pe);
 CREATE INDEX IF NOT EXISTS idx_peer_cache_symbol ON peer_cache(symbol);
 CREATE INDEX IF NOT EXISTS idx_options_chain_symbol ON options_chain_cache(symbol);
 CREATE INDEX IF NOT EXISTS idx_options_contract_symbol ON options_contract_cache(contract_symbol);
+CREATE INDEX IF NOT EXISTS idx_options_strategy_symbol ON options_strategy_cache(symbol);
+CREATE INDEX IF NOT EXISTS idx_options_iv_symbol_date ON options_iv_snapshots(symbol, as_of_date);
 """
 
 
@@ -780,6 +804,175 @@ def get_options_contract_cache(cache_key: str) -> Optional[dict[str, Any]]:
             "payload": payload,
             "updated_at": datetime.fromisoformat(row["updated_at"]),
         }
+
+
+def upsert_options_strategy_cache(
+    cache_key: str,
+    *,
+    symbol: str,
+    expiration: str,
+    payload: dict[str, Any],
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO options_strategy_cache(cache_key, symbol, expiration, payload_json, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(cache_key) DO UPDATE SET
+                symbol=excluded.symbol,
+                expiration=excluded.expiration,
+                payload_json=excluded.payload_json,
+                updated_at=excluded.updated_at
+            """,
+            (
+                cache_key,
+                symbol.upper(),
+                expiration,
+                json.dumps(payload),
+                now,
+            ),
+        )
+
+
+def get_options_strategy_cache(cache_key: str) -> Optional[dict[str, Any]]:
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT cache_key, symbol, expiration, payload_json, updated_at
+            FROM options_strategy_cache
+            WHERE cache_key = ?
+            """,
+            (cache_key,),
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            payload = json.loads(row["payload_json"])
+        except json.JSONDecodeError:
+            return None
+        return {
+            "cache_key": row["cache_key"],
+            "symbol": row["symbol"],
+            "expiration": row["expiration"],
+            "payload": payload,
+            "updated_at": datetime.fromisoformat(row["updated_at"]),
+        }
+
+
+def upsert_options_iv_snapshot(
+    *,
+    symbol: str,
+    as_of_date: str,
+    expiration: str,
+    dte: Optional[int],
+    atm_iv: Optional[float],
+    spot: Optional[float],
+    call_volume: Optional[float] = None,
+    put_volume: Optional[float] = None,
+    call_oi: Optional[float] = None,
+    put_oi: Optional[float] = None,
+) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO options_iv_snapshots(
+                symbol, as_of_date, expiration, dte, atm_iv, spot,
+                call_volume, put_volume, call_oi, put_oi
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(symbol, as_of_date, expiration) DO UPDATE SET
+                dte=excluded.dte,
+                atm_iv=excluded.atm_iv,
+                spot=excluded.spot,
+                call_volume=excluded.call_volume,
+                put_volume=excluded.put_volume,
+                call_oi=excluded.call_oi,
+                put_oi=excluded.put_oi
+            """,
+            (
+                symbol.upper(),
+                as_of_date[:10],
+                expiration[:10],
+                dte,
+                atm_iv,
+                spot,
+                call_volume,
+                put_volume,
+                call_oi,
+                put_oi,
+            ),
+        )
+
+
+def load_options_iv_snapshots(
+    symbol: str,
+    *,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    expiration: Optional[str] = None,
+) -> pd.DataFrame:
+    clauses = ["symbol = ?"]
+    params: list = [symbol.upper()]
+    if start:
+        clauses.append("as_of_date >= ?")
+        params.append(start[:10])
+    if end:
+        clauses.append("as_of_date <= ?")
+        params.append(end[:10])
+    if expiration:
+        clauses.append("expiration = ?")
+        params.append(expiration[:10])
+    where = " AND ".join(clauses)
+    with get_conn() as conn:
+        return pd.read_sql_query(
+            f"""
+            SELECT symbol, as_of_date, expiration, dte, atm_iv, spot,
+                   call_volume, put_volume, call_oi, put_oi
+            FROM options_iv_snapshots
+            WHERE {where}
+            ORDER BY as_of_date, expiration
+            """,
+            conn,
+            params=params,
+        )
+
+
+def load_earnings_events_range(
+    *,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    symbols: Optional[list[str]] = None,
+) -> pd.DataFrame:
+    clauses: list[str] = []
+    params: list = []
+    if start:
+        clauses.append("report_datetime >= ?")
+        params.append(start)
+    if end:
+        clauses.append("report_datetime <= ?")
+        params.append(end)
+    if symbols:
+        cleaned = [s.upper() for s in symbols if s]
+        if cleaned:
+            placeholders = ",".join("?" for _ in cleaned)
+            clauses.append(f"symbol IN ({placeholders})")
+            params.extend(cleaned)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    with get_conn() as conn:
+        df = pd.read_sql_query(
+            f"""
+            SELECT symbol, report_datetime, reported_eps, eps_estimate, surprise_pct
+            FROM earnings_events
+            {where}
+            ORDER BY report_datetime, symbol
+            """,
+            conn,
+            params=params,
+        )
+    if not df.empty:
+        df["report_datetime"] = pd.to_datetime(df["report_datetime"], errors="coerce")
+    return df
 
 
 def _f(v) -> Optional[float]:

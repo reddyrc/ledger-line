@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { useOptions } from "../api/hooks";
+import { IvEarningsChips, TermStructureTable } from "./IvEarningsChips";
 import { fmtNum, fmtPct, fmtPrice } from "../lib/format";
+import { OPTION_TIPS } from "../lib/optionsGlossary";
 
 type Props = {
   symbol: string;
@@ -64,26 +66,45 @@ export function OptionsSummaryPanel({ symbol }: Props) {
       {summary && (
         <>
           <div className="chip-row valuation-stats">
-            <span className="chip">Spot {fmtPrice(data?.spot)}</span>
-            <span className="chip">Max pain {fmtNum(summary.max_pain, 2)}</span>
-            <span className="chip">
+            <span className="chip" data-tip={OPTION_TIPS.spot}>
+              Spot {fmtPrice(data?.spot)}
+            </span>
+            <span className="chip" data-tip={OPTION_TIPS.maxPain}>
+              Max pain {fmtNum(summary.max_pain, 2)}
+            </span>
+            <span className="chip" data-tip={OPTION_TIPS.expMove}>
               Exp move{" "}
               {move?.expected_move == null
                 ? "—"
                 : `±${fmtNum(move.expected_move, 2)} (${fmtPct(move.expected_move_pct)})`}
             </span>
-            <span className="chip">
+            <span className="chip" data-tip={OPTION_TIPS.range}>
               Range{" "}
               {move?.price_low == null || move?.price_high == null
                 ? "—"
                 : `${fmtNum(move.price_low, 2)}–${fmtNum(move.price_high, 2)}`}
             </span>
-            <span className="chip">PCR OI {fmtNum(totals?.pcr_oi, 2)}</span>
-            <span className="chip">
+            <span className="chip" data-tip={OPTION_TIPS.pcrOi}>
+              PCR OI {fmtNum(totals?.pcr_oi, 2)}
+            </span>
+            <span className="chip" data-tip={OPTION_TIPS.callPutOi}>
               Call OI {fmtNum(totals?.call_oi, 0)} · Put OI{" "}
               {fmtNum(totals?.put_oi, 0)}
             </span>
+            <IvEarningsChips
+              iv={data?.iv_context ?? summary.iv_context}
+              daysToEarnings={
+                data?.days_to_earnings ?? summary.days_to_earnings
+              }
+              nextEarnings={data?.next_earnings ?? summary.next_earnings}
+            />
           </div>
+
+          <TermStructureTable
+            term={
+              (data?.iv_context ?? summary.iv_context)?.term_structure ?? null
+            }
+          />
 
           {(data?.preview?.length ?? 0) > 0 && (
             <div className="table-scroll">

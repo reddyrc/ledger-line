@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     default_benchmark: str = "SPY"
     # Cache TTL in hours before re-fetching prices
     price_cache_hours: int = 18
+    # Default risk-free rate for Black–Scholes option greeks / scenarios
+    options_risk_free: float = 0.04
     # Comma-separated browser origins allowed for CORS (empty = same-origin / * for local)
     cors_origins: str = (
         "http://localhost:5180,http://127.0.0.1:5180,"

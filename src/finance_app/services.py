@@ -168,6 +168,108 @@ def valuation_history_payload(
     )
 
 
+def refresh_symbol_earnings(symbol: str) -> dict[str, Any]:
+    """Fetch Yahoo earnings dates into earnings_events without full fundamentals rebuild."""
+    from finance_app.db import upsert_earnings_events
+    from finance_app.ingest.prices_yfinance import fetch_yfinance_earnings_events
+
+    symbol = symbol.upper()
+    try:
+        fetched = fetch_yfinance_earnings_events(symbol)
+    except Exception as exc:
+        return {"symbol": symbol, "upserted": 0, "error": str(exc)}
+    if fetched is None or fetched.empty:
+        return {"symbol": symbol, "upserted": 0}
+
+    def _round(v):
+        if v is None:
+            return None
+        try:
+            return round(float(v), 6)
+        except (TypeError, ValueError):
+            return None
+
+    rows = [
+        (
+            r["report_datetime"].isoformat()
+            if hasattr(r["report_datetime"], "isoformat")
+            else str(r["report_datetime"]),
+            _round(r.get("reported_eps")),
+            _round(r.get("eps_estimate")),
+            _round(r.get("surprise_pct")),
+        )
+        for _, r in fetched.iterrows()
+    ]
+    n = upsert_earnings_events(symbol, rows)
+    return {"symbol": symbol, "upserted": n}
+
+
+def earnings_calendar_payload(
+    *,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    symbols: Optional[list[str]] = None,
+    refresh: bool = False,
+) -> dict[str, Any]:
+    """Upcoming/past earnings events for a date window."""
+    from datetime import datetime, timedelta, timezone
+
+    from finance_app.db import load_earnings_events_range
+    from finance_app.metrics.option_strategies import DEFAULT_SCAN_SYMBOLS
+
+    now = datetime.now(timezone.utc)
+    if not start:
+        start = now.strftime("%Y-%m-%d")
+    if not end:
+        end = (now + timedelta(days=45)).strftime("%Y-%m-%d")
+
+    tickers = symbols or DEFAULT_SCAN_SYMBOLS
+    if refresh:
+        for sym in tickers[:15]:
+            try:
+                refresh_symbol_earnings(sym)
+            except Exception:
+                continue
+
+    df = load_earnings_events_range(start=start, end=end + "T23:59:59", symbols=tickers)
+    events: list[dict[str, Any]] = []
+    for _, r in df.iterrows():
+        report = r["report_datetime"]
+        if hasattr(report, "isoformat"):
+            report_s = report.isoformat()
+        else:
+            report_s = str(report)
+        days = None
+        try:
+            import pandas as pd
+
+            ts = pd.to_datetime(report, errors="coerce")
+            if not pd.isna(ts):
+                days = (ts.date() - now.date()).days
+        except Exception:
+            days = None
+        events.append(
+            {
+                "symbol": r["symbol"],
+                "report_datetime": report_s,
+                "reported_eps": _f(r.get("reported_eps")),
+                "eps_estimate": _f(r.get("eps_estimate")),
+                "surprise_pct": _f(r.get("surprise_pct")),
+                "days_to_earnings": days,
+            }
+        )
+
+    return {
+        "from": start,
+        "to": end,
+        "symbols": tickers,
+        "events": events,
+        "disclaimer": (
+            "Earnings dates from Yahoo Finance via yfinance; times may be estimates."
+        ),
+    }
+
+
 def short_interest_payload(
     symbol: str,
     start: Optional[str] = None,

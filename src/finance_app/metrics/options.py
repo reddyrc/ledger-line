@@ -11,9 +11,12 @@ import pandas as pd
 from finance_app.db import (
     get_options_chain_cache,
     get_options_contract_cache,
+    load_earnings_events,
     load_ohlcv,
+    load_options_iv_snapshots,
     upsert_options_chain_cache,
     upsert_options_contract_cache,
+    upsert_options_iv_snapshot,
 )
 from finance_app.ingest.options_yfinance import (
     fetch_contract_history,
@@ -25,7 +28,319 @@ from finance_app.ingest.options_yfinance import (
 CHAIN_TTL = timedelta(minutes=5)
 CONTRACT_TTL = timedelta(minutes=15)
 PREVIEW_STRIKES = 21
+TERM_STRUCTURE_MAX = 8
+IV_RANK_MIN_SAMPLES = 20
 ALLOWED_CONTRACT_PERIODS = {"1mo", "3mo", "6mo", "1y", "ytd", "max"}
+
+
+def _dte(expiration: str, as_of: Optional[datetime] = None) -> Optional[int]:
+    try:
+        exp = datetime.strptime(expiration[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+    today = (as_of or datetime.now(timezone.utc)).date()
+    return (exp - today).days
+
+
+def atm_iv_from_chain(
+    calls: list[dict[str, Any]],
+    puts: list[dict[str, Any]],
+    spot: Optional[float],
+) -> Optional[float]:
+    """Average ATM call+put implied volatility."""
+    if spot is None or spot <= 0:
+        return None
+    call = _nearest_by_strike(calls, spot)
+    put = _nearest_by_strike(puts, spot)
+    if not call or not put:
+        return None
+    if call.get("strike") != put.get("strike"):
+        put = next((p for p in puts if p.get("strike") == call.get("strike")), put)
+    vals = [
+        v
+        for v in (_num(call.get("implied_volatility")), _num(put.get("implied_volatility")))
+        if v is not None and v > 0
+    ]
+    if not vals:
+        return None
+    return _round(sum(vals) / len(vals), 6)
+
+
+def snapshot_chain_iv(
+    symbol: str,
+    expiration: str,
+    calls: list[dict[str, Any]],
+    puts: list[dict[str, Any]],
+    spot: Optional[float],
+) -> Optional[float]:
+    """Persist today's ATM IV + activity for one expiration; return atm_iv."""
+    atm_iv = atm_iv_from_chain(calls, puts, spot)
+    totals = compute_put_call_totals(calls, puts)
+    as_of = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    upsert_options_iv_snapshot(
+        symbol=symbol,
+        as_of_date=as_of,
+        expiration=expiration,
+        dte=_dte(expiration),
+        atm_iv=atm_iv,
+        spot=spot,
+        call_volume=totals.get("call_volume"),
+        put_volume=totals.get("put_volume"),
+        call_oi=totals.get("call_oi"),
+        put_oi=totals.get("put_oi"),
+    )
+    return atm_iv
+
+
+def compute_iv_rank_percentile(symbol: str, current_iv: Optional[float]) -> dict[str, Any]:
+    """IV rank / percentile from stored snapshots (nearest-expiry series preferred)."""
+    end = datetime.now(timezone.utc).date()
+    start = (end - timedelta(days=370)).isoformat()
+    df = load_options_iv_snapshots(symbol, start=start, end=end.isoformat())
+    if df.empty or current_iv is None:
+        return {
+            "atm_iv": _round(current_iv),
+            "iv_rank_1y": None,
+            "iv_percentile_1y": None,
+            "sample_count": 0,
+            "building_history": True,
+        }
+
+    # Prefer one row per day: take min-dte expiration that day
+    df = df.dropna(subset=["atm_iv"]).copy()
+    if df.empty:
+        return {
+            "atm_iv": _round(current_iv),
+            "iv_rank_1y": None,
+            "iv_percentile_1y": None,
+            "sample_count": 0,
+            "building_history": True,
+        }
+    df = df.sort_values(["as_of_date", "dte"], ascending=[True, True])
+    daily = df.groupby("as_of_date", as_index=False).first()
+    series = [float(x) for x in daily["atm_iv"].tolist() if x is not None]
+    n = len(series)
+    if n < IV_RANK_MIN_SAMPLES:
+        return {
+            "atm_iv": _round(current_iv),
+            "iv_rank_1y": None,
+            "iv_percentile_1y": None,
+            "sample_count": n,
+            "building_history": True,
+        }
+
+    lo, hi = min(series), max(series)
+    iv_rank = None if hi <= lo else (current_iv - lo) / (hi - lo)
+    below = sum(1 for v in series if v <= current_iv)
+    iv_pct = below / n
+    return {
+        "atm_iv": _round(current_iv),
+        "iv_rank_1y": _round(iv_rank, 4),
+        "iv_percentile_1y": _round(iv_pct, 4),
+        "sample_count": n,
+        "building_history": False,
+    }
+
+
+def build_term_structure(
+    symbol: str,
+    expirations: list[str],
+    spot: Optional[float],
+    *,
+    primary_expiration: str,
+    primary_calls: list[dict[str, Any]],
+    primary_puts: list[dict[str, Any]],
+    fetch_chain_fn: Callable[..., dict[str, Any]],
+    max_expiries: int = TERM_STRUCTURE_MAX,
+) -> list[dict[str, Any]]:
+    """ATM IV across nearest expirations (rate-limited)."""
+    out: list[dict[str, Any]] = []
+    chosen = expirations[:max_expiries]
+    for exp in chosen:
+        if exp == primary_expiration:
+            calls, puts = primary_calls, primary_puts
+        else:
+            try:
+                raw = fetch_chain_fn(symbol, exp)
+                calls = [enrich_contract(c) for c in raw.get("calls") or []]
+                puts = [enrich_contract(p) for p in raw.get("puts") or []]
+            except Exception:
+                continue
+        atm_iv = snapshot_chain_iv(symbol, exp, calls, puts, spot)
+        em = compute_expected_move(calls, puts, spot)
+        out.append(
+            {
+                "expiration": exp,
+                "dte": _dte(exp),
+                "atm_iv": atm_iv,
+                "expected_move": em.get("expected_move"),
+            }
+        )
+    return out
+
+
+def next_earnings_info(symbol: str) -> dict[str, Any]:
+    """Upcoming earnings from local earnings_events (may be empty)."""
+    empty = {
+        "next_earnings": None,
+        "days_to_earnings": None,
+        "eps_estimate": None,
+    }
+    try:
+        df = load_earnings_events(symbol)
+    except Exception:
+        return empty
+    if df.empty:
+        return empty
+
+    today = datetime.now(timezone.utc).date()
+    dates = pd.to_datetime(df["report_datetime"], errors="coerce")
+    # Stored values may be tz-naive; compare on dates only
+    df = df.assign(_report_date=dates.dt.date)
+    future = df[df["_report_date"].notna() & (df["_report_date"] >= today)]
+    if future.empty:
+        return empty
+
+    future = future.sort_values("_report_date")
+    row = future.iloc[0]
+    report_date = row["_report_date"]
+    report_raw = row["report_datetime"]
+    report_s = (
+        report_raw.isoformat()
+        if hasattr(report_raw, "isoformat")
+        else str(report_raw)
+    )
+    return {
+        "next_earnings": report_s,
+        "days_to_earnings": (report_date - today).days,
+        "eps_estimate": _round(row.get("eps_estimate")),
+    }
+
+
+def compute_uoa(
+    calls: list[dict[str, Any]],
+    puts: list[dict[str, Any]],
+    *,
+    expiration: Optional[str] = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Heuristic unusual activity from volume/OI vs chain median."""
+    dte = _dte(expiration) if expiration else None
+    rows: list[dict[str, Any]] = []
+    for side, contracts in (("call", calls), ("put", puts)):
+        for c in contracts:
+            vol = _num(c.get("volume")) or 0.0
+            oi = _num(c.get("open_interest")) or 0.0
+            mid = _num(c.get("mid")) or _num(c.get("last")) or 0.0
+            if vol <= 0:
+                continue
+            oi_eff = max(oi, 1.0)
+            vol_oi = vol / oi_eff
+            # Cap extreme ratios when OI is tiny
+            if oi < 10:
+                vol_oi = min(vol_oi, 20.0)
+            notional = vol * mid * 100.0
+            rows.append(
+                {
+                    "contract_symbol": c.get("contract_symbol"),
+                    "side": side,
+                    "strike": c.get("strike"),
+                    "expiration": expiration,
+                    "dte": dte,
+                    "volume": _round(vol, 0),
+                    "open_interest": _round(oi, 0),
+                    "mid": _round(mid),
+                    "implied_volatility": _round(c.get("implied_volatility")),
+                    "volume_oi": _round(vol_oi, 4),
+                    "premium_notional": _round(notional, 0),
+                    "day_low": c.get("day_low"),
+                    "day_high": c.get("day_high"),
+                }
+            )
+    if not rows:
+        return []
+
+    ratios = sorted(r["volume_oi"] for r in rows if r["volume_oi"] is not None)
+    mid_idx = len(ratios) // 2
+    median = ratios[mid_idx] if ratios else 1.0
+    median = median if median and median > 0 else 1.0
+
+    for r in rows:
+        ratio = r["volume_oi"] or 0.0
+        # Score 0-100: blend volume/OI vs median and notional size
+        rel = ratio / median
+        notional = r["premium_notional"] or 0.0
+        score = min(100.0, 40.0 * min(rel, 5.0) / 5.0 + 40.0 * min(notional / 250_000.0, 1.0) + 20.0 * min(ratio / 5.0, 1.0))
+        r["score"] = _round(score, 1)
+        r["vs_median_vol_oi"] = _round(rel, 2)
+
+    rows.sort(key=lambda x: float(x.get("score") or 0), reverse=True)
+    return rows[:limit]
+
+
+def attach_iv_and_earnings(
+    payload: dict[str, Any],
+    *,
+    term_structure: Optional[list[dict[str, Any]]] = None,
+) -> dict[str, Any]:
+    """Mutate/return payload with iv_context + earnings proximity. Never raises."""
+    try:
+        return _attach_iv_and_earnings(payload, term_structure=term_structure)
+    except Exception:
+        return payload
+
+
+def _attach_iv_and_earnings(
+    payload: dict[str, Any],
+    *,
+    term_structure: Optional[list[dict[str, Any]]] = None,
+) -> dict[str, Any]:
+    symbol = payload.get("symbol") or ""
+    calls = payload.get("calls") or []
+    puts = payload.get("puts") or []
+    spot = _num(payload.get("spot"))
+    atm_iv = atm_iv_from_chain(calls, puts, spot) if (calls or puts) else None
+    # Fall back to term structure primary
+    if atm_iv is None and term_structure:
+        for row in term_structure:
+            if row.get("expiration") == payload.get("expiration") and row.get("atm_iv") is not None:
+                atm_iv = row["atm_iv"]
+                break
+        if atm_iv is None and term_structure:
+            atm_iv = term_structure[0].get("atm_iv")
+
+    iv_stats = compute_iv_rank_percentile(symbol, atm_iv)
+    earnings = next_earnings_info(symbol)
+    iv_context = {
+        **iv_stats,
+        "term_structure": term_structure
+        or (
+            [
+                {
+                    "expiration": payload.get("expiration"),
+                    "dte": _dte(payload.get("expiration") or ""),
+                    "atm_iv": atm_iv,
+                    "expected_move": (payload.get("summary") or {})
+                    .get("expected_move", {})
+                    .get("expected_move")
+                    if isinstance((payload.get("summary") or {}).get("expected_move"), dict)
+                    else None,
+                }
+            ]
+            if payload.get("expiration")
+            else []
+        ),
+    }
+    payload["iv_context"] = iv_context
+    payload["next_earnings"] = earnings.get("next_earnings")
+    payload["days_to_earnings"] = earnings.get("days_to_earnings")
+    payload["eps_estimate"] = earnings.get("eps_estimate")
+    summary = dict(payload.get("summary") or {})
+    summary["iv_context"] = iv_context
+    summary["days_to_earnings"] = earnings.get("days_to_earnings")
+    summary["next_earnings"] = earnings.get("next_earnings")
+    payload["summary"] = summary
+    return payload
 
 
 def _num(v: Any) -> Optional[float]:
@@ -342,9 +657,21 @@ def options_payload(
         payload["stale"] = False
         payload["fetched_at"] = cached["updated_at"].isoformat()
         payload["spot"] = spot or payload.get("spot")
+        # Refresh IV rank / earnings from durable stores without refetching Yahoo
+        attach_iv_and_earnings(
+            payload,
+            term_structure=(payload.get("iv_context") or {}).get("term_structure"),
+        )
+        if full_chain and "uoa" not in payload:
+            payload["uoa"] = compute_uoa(
+                payload.get("calls") or [],
+                payload.get("puts") or [],
+                expiration=expiration,
+            )
         if not full_chain:
             payload["calls"] = []
             payload["puts"] = []
+            payload.pop("uoa", None)
         return payload
 
     try:
@@ -353,6 +680,33 @@ def options_payload(
         puts = [enrich_contract(p) for p in raw.get("puts") or []]
         summary = build_expiration_summary(calls, puts, spot)
         preview = near_atm_preview(calls, puts, spot)
+        snapshot_chain_iv(symbol, expiration, calls, puts, spot)
+
+        term_structure: list[dict[str, Any]]
+        if full_chain:
+            term_structure = build_term_structure(
+                symbol,
+                expirations,
+                spot,
+                primary_expiration=expiration,
+                primary_calls=calls,
+                primary_puts=puts,
+                fetch_chain_fn=fetch_chain_fn,
+            )
+        else:
+            atm_iv = atm_iv_from_chain(calls, puts, spot)
+            em = summary.get("expected_move") or {}
+            term_structure = [
+                {
+                    "expiration": expiration,
+                    "dte": _dte(expiration),
+                    "atm_iv": atm_iv,
+                    "expected_move": em.get("expected_move")
+                    if isinstance(em, dict)
+                    else None,
+                }
+            ]
+
         now = datetime.now(timezone.utc).isoformat()
         payload = {
             "symbol": symbol,
@@ -363,11 +717,13 @@ def options_payload(
             "preview": preview,
             "calls": calls,
             "puts": puts,
+            "uoa": compute_uoa(calls, puts, expiration=expiration) if full_chain else [],
             "fetched_at": now,
             "freshness": "live",
             "stale": False,
             "disclaimer": disclaimer,
         }
+        attach_iv_and_earnings(payload, term_structure=term_structure)
         upsert_options_chain_cache(
             cache_key,
             symbol=symbol,
@@ -379,6 +735,7 @@ def options_payload(
             out = dict(payload)
             out["calls"] = []
             out["puts"] = []
+            out.pop("uoa", None)
             return out
         return payload
     except Exception as exc:
@@ -391,9 +748,14 @@ def options_payload(
                 cached["updated_at"].isoformat() if cached.get("updated_at") else None
             )
             payload["spot"] = spot or payload.get("spot")
+            attach_iv_and_earnings(
+                payload,
+                term_structure=(payload.get("iv_context") or {}).get("term_structure"),
+            )
             if not full_chain:
                 payload["calls"] = []
                 payload["puts"] = []
+                payload.pop("uoa", None)
             return payload
         return {
             "symbol": symbol,

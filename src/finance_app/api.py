@@ -5,10 +5,16 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from finance_app.ingest.fred import DEFAULT_SERIES
+from finance_app.metrics.option_strategies import (
+    strategies_scan,
+    strategy_detail,
+    generate_strategies,
+)
 from finance_app.metrics.options import options_contract_payload, options_payload
 from finance_app.metrics.peers import compute_peer_comparison
 from finance_app.services import (
     bootstrap_macro,
+    earnings_calendar_payload,
     fundamentals_payload,
     macro_payload,
     screen_payload,
@@ -185,6 +191,116 @@ def get_options_contract(
         day_low=day_low,
         day_high=day_high,
         force_refresh=refresh,
+    )
+
+
+@router.get("/symbols/{symbol}/options/strategies")
+def get_option_strategies(
+    symbol: str,
+    expiration: Optional[str] = Query(None, description="YYYY-MM-DD; defaults to nearest"),
+    limit: int = Query(20, ge=1, le=50),
+    refresh: bool = Query(False),
+    min_oi: Optional[float] = Query(None, description="Min open interest on every leg"),
+    min_volume: Optional[float] = Query(None, description="Min volume on every leg"),
+    max_spread_pct: Optional[float] = Query(
+        None, description="Max (ask-bid)/mid across legs"
+    ),
+) -> dict:
+    return generate_strategies(
+        symbol,
+        expiration=expiration,
+        limit=limit,
+        force_refresh=refresh,
+        min_oi=min_oi,
+        min_volume=min_volume,
+        max_spread_pct=max_spread_pct,
+    )
+
+
+@router.get("/symbols/{symbol}/options/strategies/{idea_id}")
+def get_option_strategy_detail(
+    symbol: str,
+    idea_id: str,
+    expiration: Optional[str] = Query(None),
+    refresh: bool = Query(False),
+) -> dict:
+    result = strategy_detail(
+        symbol, idea_id, expiration=expiration, force_refresh=refresh
+    )
+    if result.get("error") and not result.get("idea"):
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@router.get("/symbols/{symbol}/options/uoa")
+def get_options_uoa(
+    symbol: str,
+    expiration: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=50),
+    refresh: bool = Query(False),
+) -> dict:
+    chain = options_payload(
+        symbol, expiration=expiration, full_chain=True, force_refresh=refresh
+    )
+    from finance_app.metrics.options import compute_uoa
+
+    rows = chain.get("uoa") or compute_uoa(
+        chain.get("calls") or [],
+        chain.get("puts") or [],
+        expiration=chain.get("expiration"),
+        limit=limit,
+    )
+    return {
+        "symbol": symbol.upper(),
+        "expiration": chain.get("expiration"),
+        "rows": rows[:limit],
+        "freshness": chain.get("freshness"),
+        "disclaimer": (
+            "Heuristic unusual activity from same-day volume/OI vs chain median — "
+            "not confirmed block prints."
+        ),
+        "error": chain.get("error"),
+    }
+
+
+@router.get("/strategies/scan")
+def scan_strategies(
+    symbols: Optional[str] = Query(
+        None, description="Comma-separated tickers (max 15); default liquid watchlist"
+    ),
+    expiration: Optional[str] = Query(
+        "nearest", description="nearest or YYYY-MM-DD"
+    ),
+    limit_per_symbol: int = Query(5, ge=1, le=15),
+    refresh: bool = Query(False),
+    min_oi: Optional[float] = Query(None),
+    min_volume: Optional[float] = Query(None),
+    max_spread_pct: Optional[float] = Query(None),
+) -> dict:
+    tickers = [s.strip() for s in symbols.split(",")] if symbols else None
+    return strategies_scan(
+        tickers,
+        expiration=expiration,
+        limit_per_symbol=limit_per_symbol,
+        force_refresh=refresh,
+        min_oi=min_oi,
+        min_volume=min_volume,
+        max_spread_pct=max_spread_pct,
+    )
+
+
+@router.get("/earnings/calendar")
+def get_earnings_calendar(
+    start: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    end: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    symbols: Optional[str] = Query(
+        None, description="Comma-separated tickers; default liquid watchlist"
+    ),
+    refresh: bool = Query(False, description="Refresh Yahoo earnings for listed symbols"),
+) -> dict:
+    tickers = [s.strip() for s in symbols.split(",") if s.strip()] if symbols else None
+    return earnings_calendar_payload(
+        start=start, end=end, symbols=tickers, refresh=refresh
     )
 
 

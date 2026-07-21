@@ -10,14 +10,54 @@ import {
   YAxis,
 } from "recharts";
 
-import { useOptionsChain, useOptionsContract } from "../api/hooks";
+import { useHistory, useOptionsChain, useOptionsContract } from "../api/hooks";
+import type { DateBounds } from "../api/hooks";
+import { IvEarningsChips, TermStructureTable } from "../components/IvEarningsChips";
+import { StrategyIdeasPanel } from "../components/StrategyIdeasPanel";
 import type { OptionContract } from "../types/api";
 import { fmtNum, fmtPct, fmtPrice, normalizeTicker } from "../lib/format";
+import { OPTION_TIPS } from "../lib/optionsGlossary";
 
 type Selected = {
   side: "call" | "put";
   contract: OptionContract;
 };
+
+function formatExpiry(
+  expiration: string | null | undefined,
+  dte: number | null | undefined,
+): string {
+  if (!expiration) return "—";
+  const date = String(expiration).slice(0, 10);
+  let days = dte;
+  if (days == null) {
+    const exp = new Date(`${date}T00:00:00`);
+    if (!Number.isNaN(exp.getTime())) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      days = Math.round((exp.getTime() - today.getTime()) / 86_400_000);
+    }
+  }
+  if (days == null) return date;
+  return `${date} (${days <= 0 ? "expires today" : `${days}d`})`;
+}
+
+function historyBounds(period: string): DateBounds {
+  const now = new Date();
+  if (period === "max") return {};
+  if (period === "ytd") {
+    return { start: `${now.getFullYear()}-01-01` };
+  }
+
+  const months: Record<string, number> = {
+    "1mo": 1,
+    "3mo": 3,
+    "6mo": 6,
+    "1y": 12,
+  };
+  now.setMonth(now.getMonth() - (months[period] ?? 3));
+  return { start: now.toISOString().slice(0, 10) };
+}
 
 export function OptionsPage() {
   const { symbol: raw } = useParams();
@@ -25,6 +65,7 @@ export function OptionsPage() {
   const [expiration, setExpiration] = useState<string | undefined>(undefined);
   const [selected, setSelected] = useState<Selected | null>(null);
   const [period, setPeriod] = useState("3mo");
+  const [showStock, setShowStock] = useState(false);
 
   const chain = useOptionsChain(symbol, expiration);
 
@@ -77,6 +118,27 @@ export function OptionsPage() {
     day_low: selected?.contract.day_low,
     day_high: selected?.contract.day_high,
   });
+  const stockBounds = useMemo(() => historyBounds(period), [period]);
+  const stockQuery = useHistory(
+    symbol,
+    stockBounds,
+    showStock && Boolean(selected),
+  );
+  const contractChartData = useMemo(() => {
+    const series = contractQuery.data?.series ?? [];
+    if (!showStock) return series;
+
+    const stockByDate = new Map(
+      (stockQuery.data?.bars ?? []).map((bar) => [
+        bar.date,
+        bar.adj_close ?? bar.close,
+      ]),
+    );
+    return series.map((point) => ({
+      ...point,
+      stock: stockByDate.get(point.date) ?? null,
+    }));
+  }, [contractQuery.data?.series, showStock, stockQuery.data?.bars]);
 
   if (!symbol) {
     return <p className="muted">Enter a valid ticker.</p>;
@@ -122,31 +184,123 @@ export function OptionsPage() {
 
       {summary && (
         <div className="chip-row valuation-stats">
-          <span className="chip">Max pain {fmtNum(summary.max_pain, 2)}</span>
-          <span className="chip">
+          <span className="chip" data-tip={OPTION_TIPS.maxPain}>
+            Max pain {fmtNum(summary.max_pain, 2)}
+          </span>
+          <span className="chip" data-tip={OPTION_TIPS.expMove}>
             Exp move{" "}
             {move?.expected_move == null
               ? "—"
               : `±${fmtNum(move.expected_move, 2)} (${fmtPct(move.expected_move_pct)})`}
           </span>
-          <span className="chip">
+          <span className="chip" data-tip={OPTION_TIPS.range}>
             Range{" "}
             {move?.price_low == null || move?.price_high == null
               ? "—"
               : `${fmtNum(move.price_low, 2)}–${fmtNum(move.price_high, 2)}`}
           </span>
-          <span className="chip">PCR OI {fmtNum(totals?.pcr_oi, 2)}</span>
-          <span className="chip">PCR vol {fmtNum(totals?.pcr_volume, 2)}</span>
-          <span className="chip">
+          <span className="chip" data-tip={OPTION_TIPS.pcrOi}>
+            PCR OI {fmtNum(totals?.pcr_oi, 2)}
+          </span>
+          <span className="chip" data-tip={OPTION_TIPS.pcrVol}>
+            PCR vol {fmtNum(totals?.pcr_volume, 2)}
+          </span>
+          <span className="chip" data-tip={OPTION_TIPS.callPutOi}>
             Call OI {fmtNum(totals?.call_oi, 0)} · Put OI{" "}
             {fmtNum(totals?.put_oi, 0)}
           </span>
-          <span className="chip">
+          <span className="chip" data-tip={OPTION_TIPS.callPutVol}>
             Call vol {fmtNum(totals?.call_volume, 0)} · Put vol{" "}
             {fmtNum(totals?.put_volume, 0)}
           </span>
+          <IvEarningsChips
+            iv={data?.iv_context ?? summary.iv_context}
+            daysToEarnings={data?.days_to_earnings ?? summary.days_to_earnings}
+            nextEarnings={data?.next_earnings ?? summary.next_earnings}
+          />
         </div>
       )}
+
+      {summary && (
+        <TermStructureTable
+          term={(data?.iv_context ?? summary.iv_context)?.term_structure}
+        />
+      )}
+
+      {(data?.uoa?.length ?? 0) > 0 && (
+        <div className="panel">
+          <div className="panel-head">
+            <h3>Unusual activity</h3>
+            <p className="muted small panel-sub">
+              Heuristic volume/OI vs chain median — not confirmed blocks
+            </p>
+          </div>
+          <div className="table-scroll">
+            <table className="data-table screener-table">
+              <thead>
+                <tr>
+                  <th>Side</th>
+                  <th>Strike</th>
+                  <th title="Contract expiration date and days remaining until it expires.">
+                    Expires
+                  </th>
+                  <th title={OPTION_TIPS.volume}>Vol</th>
+                  <th title={OPTION_TIPS.oi}>OI</th>
+                  <th title={OPTION_TIPS.volOi}>Vol/OI</th>
+                  <th title={OPTION_TIPS.notional}>Notional</th>
+                  <th title={OPTION_TIPS.uoaScore}>Score</th>
+                  <th>Contract</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(data?.uoa ?? []).slice(0, 12).map((row) => (
+                  <tr key={String(row.contract_symbol)}>
+                    <td className="mono">{row.side}</td>
+                    <td className="mono">{fmtNum(row.strike, 2)}</td>
+                    <td className="mono">
+                      {formatExpiry(
+                        row.expiration ?? data?.expiration,
+                        row.dte,
+                      )}
+                    </td>
+                    <td className="mono">{fmtNum(row.volume, 0)}</td>
+                    <td className="mono">{fmtNum(row.open_interest, 0)}</td>
+                    <td className="mono">{fmtNum(row.volume_oi, 2)}</td>
+                    <td className="mono">{fmtNum(row.premium_notional, 0)}</td>
+                    <td className="mono">{fmtNum(row.score, 0)}</td>
+                    <td className="mono">
+                      {row.contract_symbol &&
+                      (row.side === "call" || row.side === "put") ? (
+                        <button
+                          type="button"
+                          className="linkish mono"
+                          onClick={() => {
+                            const side = row.side as "call" | "put";
+                            const list =
+                              side === "call" ? data?.calls : data?.puts;
+                            const found = (list ?? []).find(
+                              (c) => c.contract_symbol === row.contract_symbol,
+                            );
+                            if (found) {
+                              setSelected({ side, contract: found });
+                            }
+                          }}
+                        >
+                          {row.contract_symbol}
+                        </button>
+                      ) : (
+                        row.contract_symbol ?? "—"
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <StrategyIdeasPanel symbol={symbol} expiration={expiration ?? data?.expiration ?? undefined} />
 
       <div className="options-layout">
         <div className="panel">
@@ -163,17 +317,29 @@ export function OptionsPage() {
               <table className="data-table screener-table options-chain-table">
                 <thead>
                   <tr>
-                    <th>C vol</th>
-                    <th>C OI</th>
-                    <th>C IV</th>
-                    <th>C mid</th>
-                    <th>C day</th>
-                    <th>Strike</th>
-                    <th>P day</th>
-                    <th>P mid</th>
-                    <th>P IV</th>
-                    <th>P OI</th>
-                    <th>P vol</th>
+                    <th title={`Call volume. ${OPTION_TIPS.volume}`}>C vol</th>
+                    <th title={`Call open interest. ${OPTION_TIPS.oi}`}>
+                      C OI
+                    </th>
+                    <th title={`Call implied volatility. ${OPTION_TIPS.iv}`}>
+                      C IV
+                    </th>
+                    <th title={`Call mid price. ${OPTION_TIPS.mid}`}>C mid</th>
+                    <th title="Call price change today (absolute and %).">
+                      C day
+                    </th>
+                    <th title="Price at which the option can be exercised. Bold row ≈ at-the-money.">
+                      Strike
+                    </th>
+                    <th title="Put price change today (absolute and %).">
+                      P day
+                    </th>
+                    <th title={`Put mid price. ${OPTION_TIPS.mid}`}>P mid</th>
+                    <th title={`Put implied volatility. ${OPTION_TIPS.iv}`}>
+                      P IV
+                    </th>
+                    <th title={`Put open interest. ${OPTION_TIPS.oi}`}>P OI</th>
+                    <th title={`Put volume. ${OPTION_TIPS.volume}`}>P vol</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -263,20 +429,30 @@ export function OptionsPage() {
           <div className="panel-head">
             <h3>Contract</h3>
             {selected && (
-              <label className="options-exp-label">
-                Range
-                <select
-                  className="options-exp-select mono"
-                  value={period}
-                  onChange={(e) => setPeriod(e.target.value)}
+              <div className="strategy-filters">
+                <button
+                  type="button"
+                  className={`chart-toggle-btn${showStock ? " active" : ""}`}
+                  onClick={() => setShowStock((value) => !value)}
+                  aria-pressed={showStock}
                 >
-                  {["1mo", "3mo", "6mo", "1y", "ytd", "max"].map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  {showStock ? "Hide stock" : "Show stock"}
+                </button>
+                <label className="options-exp-label">
+                  Range
+                  <select
+                    className="options-exp-select mono"
+                    value={period}
+                    onChange={(e) => setPeriod(e.target.value)}
+                  >
+                    {["1mo", "3mo", "6mo", "1y", "ytd", "max"].map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
             )}
           </div>
 
@@ -291,25 +467,29 @@ export function OptionsPage() {
                 {fmtNum(selected.contract.strike, 2)}
               </p>
               <div className="chip-row valuation-stats">
-                <span className="chip">Mid {fmtNum(selected.contract.mid)}</span>
-                <span className="chip">
+                <span className="chip" data-tip={OPTION_TIPS.mid}>
+                  Mid {fmtNum(selected.contract.mid)}
+                </span>
+                <span className="chip" data-tip={OPTION_TIPS.bidAsk}>
                   Bid/Ask {fmtNum(selected.contract.bid)} /{" "}
                   {fmtNum(selected.contract.ask)}
                 </span>
-                <span className="chip">Last {fmtNum(selected.contract.last)}</span>
-                <span className="chip">
+                <span className="chip" data-tip={OPTION_TIPS.last}>
+                  Last {fmtNum(selected.contract.last)}
+                </span>
+                <span className="chip" data-tip={OPTION_TIPS.iv}>
                   IV {fmtPct(selected.contract.implied_volatility)}
                 </span>
-                <span className="chip">
+                <span className="chip" data-tip={OPTION_TIPS.oi}>
                   OI {fmtNum(selected.contract.open_interest, 0)}
                 </span>
-                <span className="chip">
+                <span className="chip" data-tip={OPTION_TIPS.volume}>
                   Vol {fmtNum(selected.contract.volume, 0)}
                 </span>
-                <span className="chip">
+                <span className="chip" data-tip={OPTION_TIPS.breakeven}>
                   Breakeven {fmtNum(selected.contract.breakeven)}
                 </span>
-                <span className="chip">
+                <span className="chip" data-tip={OPTION_TIPS.session}>
                   Session{" "}
                   {selected.contract.day_low != null &&
                   selected.contract.day_high != null
@@ -318,7 +498,7 @@ export function OptionsPage() {
                 </span>
                 {(["delta", "gamma", "theta", "vega", "rho"] as const).map((g) =>
                   selected.contract[g] != null ? (
-                    <span key={g} className="chip">
+                    <span key={g} className="chip" data-tip={OPTION_TIPS[g]}>
                       {g} {fmtNum(selected.contract[g], 4)}
                     </span>
                   ) : null,
@@ -328,26 +508,40 @@ export function OptionsPage() {
               {contractQuery.isLoading && (
                 <div className="chart-skeleton skeleton-block" />
               )}
+              {showStock && stockQuery.isLoading && (
+                <p className="muted small">Loading {symbol} price history…</p>
+              )}
+              {showStock && stockQuery.isError && (
+                <p className="banner warn">
+                  Unable to load {symbol} price history.
+                </p>
+              )}
               {contractQuery.data?.error && (
                 <p className="muted">{contractQuery.data.error}</p>
               )}
               {contractQuery.data && !contractQuery.data.error && (
                 <>
                   <div className="chip-row">
-                    <span className="chip chip-median">
+                    <span
+                      className="chip chip-median"
+                      data-tip={OPTION_TIPS.tradedLow}
+                    >
                       Traded low {fmtNum(contractQuery.data.traded_low)}
                     </span>
-                    <span className="chip chip-median">
+                    <span
+                      className="chip chip-median"
+                      data-tip={OPTION_TIPS.tradedHigh}
+                    >
                       Traded high {fmtNum(contractQuery.data.traded_high)}
                     </span>
-                    <span className="chip">
+                    <span className="chip" data-tip={OPTION_TIPS.tradedLast}>
                       Last close {fmtNum(contractQuery.data.traded_last)}
                     </span>
                   </div>
-                  {(contractQuery.data.series?.length ?? 0) > 0 ? (
+                  {contractChartData.length > 0 ? (
                     <div className="options-premium-chart">
                       <ResponsiveContainer width="100%" height={220}>
-                        <LineChart data={contractQuery.data.series}>
+                        <LineChart data={contractChartData}>
                           <CartesianGrid
                             stroke="var(--grid)"
                             strokeDasharray="3 3"
@@ -358,10 +552,23 @@ export function OptionsPage() {
                             minTickGap={28}
                           />
                           <YAxis
+                            yAxisId="premium"
                             tick={{ fill: "var(--muted)", fontSize: 11 }}
                             width={42}
                             domain={["auto", "auto"]}
                           />
+                          {showStock && (
+                            <YAxis
+                              yAxisId="stock"
+                              orientation="right"
+                              tick={{ fill: "var(--muted)", fontSize: 11 }}
+                              width={54}
+                              domain={["auto", "auto"]}
+                              tickFormatter={(value: number) =>
+                                fmtPrice(value)
+                              }
+                            />
+                          )}
                           <Tooltip
                             contentStyle={{
                               background: "var(--panel)",
@@ -369,6 +576,7 @@ export function OptionsPage() {
                             }}
                           />
                           <Line
+                            yAxisId="premium"
                             type="monotone"
                             dataKey="close"
                             stroke="var(--accent)"
@@ -377,6 +585,7 @@ export function OptionsPage() {
                             name="Premium"
                           />
                           <Line
+                            yAxisId="premium"
                             type="monotone"
                             dataKey="high"
                             stroke="var(--accent-2)"
@@ -386,6 +595,7 @@ export function OptionsPage() {
                             name="High"
                           />
                           <Line
+                            yAxisId="premium"
                             type="monotone"
                             dataKey="low"
                             stroke="var(--muted)"
@@ -394,8 +604,40 @@ export function OptionsPage() {
                             strokeDasharray="4 4"
                             name="Low"
                           />
+                          {showStock && (
+                            <Line
+                              yAxisId="stock"
+                              type="monotone"
+                              dataKey="stock"
+                              stroke="var(--danger)"
+                              dot={false}
+                              strokeWidth={2}
+                              name={`${symbol} stock`}
+                              connectNulls
+                            />
+                          )}
                         </LineChart>
                       </ResponsiveContainer>
+                      <div className="chart-legend muted small">
+                        <span className="chart-legend-item">
+                          <span className="legend-swatch legend-solid legend-accent" />
+                          Daily closing premium
+                        </span>
+                        <span className="chart-legend-item">
+                          <span className="legend-swatch legend-dashed legend-accent-2" />
+                          Daily high premium
+                        </span>
+                        <span className="chart-legend-item">
+                          <span className="legend-swatch legend-dashed legend-muted" />
+                          Daily low premium
+                        </span>
+                        {showStock && (
+                          <span className="chart-legend-item">
+                            <span className="legend-swatch legend-solid legend-danger" />
+                            {symbol} stock close (right axis)
+                          </span>
+                        )}
+                      </div>
                     </div>
                   ) : (
                     <p className="muted">No premium history for this contract.</p>

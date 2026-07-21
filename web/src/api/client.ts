@@ -1,4 +1,5 @@
 import type {
+  EarningsCalendarResponse,
   FundamentalsResponse,
   HistoryResponse,
   MacroListResponse,
@@ -10,7 +11,11 @@ import type {
   ScreenRefreshResponse,
   ScreenResponse,
   ShortInterestResponse,
+  StrategiesResponse,
+  StrategiesScanResponse,
+  StrategyDetailResponse,
   TechnicalsResponse,
+  UoaResponse,
   ValuationHistoryResponse,
 } from "../types/api";
 
@@ -180,6 +185,107 @@ export function fetchOptionsContract(
       strike: opts.strike != null ? String(opts.strike) : undefined,
       day_low: opts.day_low != null ? String(opts.day_low) : undefined,
       day_high: opts.day_high != null ? String(opts.day_high) : undefined,
+      refresh: opts.refresh ? true : undefined,
+    })}`,
+    signal,
+  );
+}
+
+export function fetchOptionStrategies(
+  symbol: string,
+  opts: {
+    expiration?: string;
+    limit?: number;
+    refresh?: boolean;
+    min_oi?: number;
+    min_volume?: number;
+    max_spread_pct?: number;
+  } = {},
+  signal?: AbortSignal,
+) {
+  return getJson<StrategiesResponse>(
+    `/symbols/${encodeURIComponent(symbol)}/options/strategies${qs({
+      expiration: opts.expiration,
+      limit: opts.limit != null ? String(opts.limit) : undefined,
+      refresh: opts.refresh ? true : undefined,
+      min_oi: opts.min_oi != null ? String(opts.min_oi) : undefined,
+      min_volume: opts.min_volume != null ? String(opts.min_volume) : undefined,
+      max_spread_pct:
+        opts.max_spread_pct != null ? String(opts.max_spread_pct) : undefined,
+    })}`,
+    signal,
+  );
+}
+
+export function fetchOptionStrategyDetail(
+  symbol: string,
+  ideaId: string,
+  opts: { expiration?: string; refresh?: boolean } = {},
+  signal?: AbortSignal,
+) {
+  return getJson<StrategyDetailResponse>(
+    `/symbols/${encodeURIComponent(symbol)}/options/strategies/${encodeURIComponent(ideaId)}${qs(opts)}`,
+    signal,
+  );
+}
+
+export function fetchStrategiesScan(
+  opts: {
+    symbols?: string[];
+    expiration?: string;
+    limit_per_symbol?: number;
+    refresh?: boolean;
+    min_oi?: number;
+    min_volume?: number;
+    max_spread_pct?: number;
+  } = {},
+  signal?: AbortSignal,
+) {
+  return getJson<StrategiesScanResponse>(
+    `/strategies/scan${qs({
+      symbols: opts.symbols?.length ? opts.symbols.join(",") : undefined,
+      expiration: opts.expiration,
+      limit_per_symbol:
+        opts.limit_per_symbol != null ? String(opts.limit_per_symbol) : undefined,
+      refresh: opts.refresh ? true : undefined,
+      min_oi: opts.min_oi != null ? String(opts.min_oi) : undefined,
+      min_volume: opts.min_volume != null ? String(opts.min_volume) : undefined,
+      max_spread_pct:
+        opts.max_spread_pct != null ? String(opts.max_spread_pct) : undefined,
+    })}`,
+    signal,
+  );
+}
+
+export function fetchOptionsUoa(
+  symbol: string,
+  opts: { expiration?: string; limit?: number; refresh?: boolean } = {},
+  signal?: AbortSignal,
+) {
+  return getJson<UoaResponse>(
+    `/symbols/${encodeURIComponent(symbol)}/options/uoa${qs({
+      expiration: opts.expiration,
+      limit: opts.limit != null ? String(opts.limit) : undefined,
+      refresh: opts.refresh ? true : undefined,
+    })}`,
+    signal,
+  );
+}
+
+export function fetchEarningsCalendar(
+  opts: {
+    start?: string;
+    end?: string;
+    symbols?: string[];
+    refresh?: boolean;
+  } = {},
+  signal?: AbortSignal,
+) {
+  return getJson<EarningsCalendarResponse>(
+    `/earnings/calendar${qs({
+      start: opts.start,
+      end: opts.end,
+      symbols: opts.symbols?.length ? opts.symbols.join(",") : undefined,
       refresh: opts.refresh ? true : undefined,
     })}`,
     signal,

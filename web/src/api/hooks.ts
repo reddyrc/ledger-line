@@ -10,6 +10,10 @@ import {
   fetchOptions,
   fetchOptionsChain,
   fetchOptionsContract,
+  fetchOptionStrategies,
+  fetchOptionStrategyDetail,
+  fetchStrategiesScan,
+  fetchEarningsCalendar,
   fetchPeers,
   fetchScreen,
   fetchScreenSectors,
@@ -100,7 +104,11 @@ export function startForRange(range: RangePreset): string | undefined {
   return startForPreset(range);
 }
 
-export function useHistory(symbol: string, bounds: DateBounds) {
+export function useHistory(
+  symbol: string,
+  bounds: DateBounds,
+  enabled = true,
+) {
   return useQuery({
     queryKey: ["history", symbol, bounds.start ?? null, bounds.end ?? null],
     queryFn: ({ signal }) =>
@@ -109,7 +117,7 @@ export function useHistory(symbol: string, bounds: DateBounds) {
         { start: bounds.start, end: bounds.end },
         signal,
       ),
-    enabled: Boolean(symbol),
+    enabled: Boolean(symbol) && enabled,
   });
 }
 
@@ -254,6 +262,104 @@ export function useOptionsContract(
         signal,
       ),
     enabled: Boolean(symbol && contract),
+  });
+}
+
+export function useOptionStrategies(
+  symbol: string,
+  expiration?: string,
+  filters?: {
+    min_oi?: number;
+    min_volume?: number;
+    max_spread_pct?: number;
+  },
+) {
+  return useQuery({
+    queryKey: [
+      "option-strategies",
+      symbol,
+      expiration ?? null,
+      filters?.min_oi ?? null,
+      filters?.min_volume ?? null,
+      filters?.max_spread_pct ?? null,
+    ],
+    queryFn: ({ signal }) =>
+      fetchOptionStrategies(
+        symbol,
+        {
+          expiration,
+          limit: 24,
+          min_oi: filters?.min_oi,
+          min_volume: filters?.min_volume,
+          max_spread_pct: filters?.max_spread_pct,
+        },
+        signal,
+      ),
+    enabled: Boolean(symbol),
+  });
+}
+
+export function useOptionStrategyDetail(
+  symbol: string,
+  ideaId: string,
+  expiration?: string,
+) {
+  return useQuery({
+    queryKey: ["option-strategy-detail", symbol, ideaId, expiration ?? null],
+    queryFn: ({ signal }) =>
+      fetchOptionStrategyDetail(symbol, ideaId, { expiration }, signal),
+    enabled: Boolean(symbol && ideaId),
+  });
+}
+
+export function useStrategiesScan(
+  symbols: string[],
+  expiration = "nearest",
+  filters?: {
+    min_oi?: number;
+    min_volume?: number;
+    max_spread_pct?: number;
+  },
+) {
+  return useQuery({
+    queryKey: [
+      "strategies-scan",
+      symbols,
+      expiration,
+      filters?.min_oi ?? null,
+      filters?.min_volume ?? null,
+      filters?.max_spread_pct ?? null,
+    ],
+    queryFn: ({ signal }) =>
+      fetchStrategiesScan(
+        {
+          symbols,
+          expiration,
+          limit_per_symbol: 5,
+          min_oi: filters?.min_oi,
+          min_volume: filters?.min_volume,
+          max_spread_pct: filters?.max_spread_pct,
+        },
+        signal,
+      ),
+    enabled: symbols.length > 0,
+  });
+}
+
+export function useEarningsCalendar(
+  opts: { start?: string; end?: string; symbols?: string[]; refresh?: boolean } = {},
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: [
+      "earnings-calendar",
+      opts.start ?? null,
+      opts.end ?? null,
+      opts.symbols ?? null,
+      opts.refresh ?? false,
+    ],
+    queryFn: ({ signal }) => fetchEarningsCalendar(opts, signal),
+    enabled,
   });
 }
 
