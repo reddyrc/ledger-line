@@ -23,6 +23,20 @@ DEFAULT_DESCRIPTION = (
 # Client routes that should appear in the sitemap
 STATIC_ROUTES = ["/", "/strategies", "/earnings", "/screen", "/macro"]
 
+# Always list these liquid tickers even before the DB has cached data
+SEED_SYMBOLS = [
+    "SPY",
+    "QQQ",
+    "IWM",
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "AMZN",
+    "META",
+    "GOOGL",
+    "TSLA",
+]
+
 _SYMBOL_RE = re.compile(r"^[A-Z0-9.\-]{1,10}$")
 
 
@@ -165,7 +179,7 @@ def robots_txt(base_url: str = "") -> str:
 def sitemap_xml(base_url: str, symbols: list[str]) -> str:
     base = base_url.rstrip("/")
     urls: list[str] = [f"{base}{r}".rstrip("/") or base for r in STATIC_ROUTES]
-    for raw in symbols:
+    for raw in SEED_SYMBOLS + list(symbols):
         sym = _clean_symbol(str(raw))
         if not sym:
             continue

@@ -82,3 +82,11 @@ def test_sitemap_xml_lists_symbols_and_static():
     assert "<loc>https://example.com/s/AAPL/options</loc>" in xml
     assert "<loc>https://example.com/s/QQQ</loc>" in xml
     assert "bad sym" not in xml
+    # No duplicates when DB symbols overlap the seed list
+    assert xml.count("<loc>https://example.com/s/AAPL</loc>") == 1
+
+
+def test_sitemap_xml_seeds_symbols_when_db_empty():
+    xml = sitemap_xml("https://example.com", [])
+    assert "<loc>https://example.com/s/SPY</loc>" in xml
+    assert "<loc>https://example.com/s/NVDA/options</loc>" in xml
