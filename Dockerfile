@@ -4,7 +4,7 @@
 FROM node:22-bookworm-slim AS web-build
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
-RUN npm ci
+RUN npm install
 COPY web/ ./
 # Same-origin API when UI is served by FastAPI
 ENV VITE_API_URL=/api/v1
@@ -32,8 +32,7 @@ COPY pyproject.toml ./
 COPY src ./src
 COPY --from=web-build /web/dist ./web/dist
 
-# Persist SQLite cache across restarts when a volume is mounted at /data
-VOLUME ["/data"]
+# Mount a Railway Volume at /data to persist the SQLite cache (do not use Docker VOLUME)
 
 EXPOSE 8000
 
