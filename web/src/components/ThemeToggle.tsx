@@ -12,7 +12,10 @@ export function ThemeToggle() {
         onClick={() => setTheme("dark")}
         title="Dark theme"
       >
-        Dark
+        <span className="theme-toggle-full">Dark</span>
+        <span className="theme-toggle-short" aria-hidden>
+          ◐
+        </span>
       </button>
       <button
         type="button"
@@ -21,7 +24,10 @@ export function ThemeToggle() {
         onClick={() => setTheme("light")}
         title="Light theme"
       >
-        Light
+        <span className="theme-toggle-full">Light</span>
+        <span className="theme-toggle-short" aria-hidden>
+          ◑
+        </span>
       </button>
     </div>
   );
