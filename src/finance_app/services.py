@@ -3,9 +3,14 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from finance_app.config import get_settings
-from finance_app.db import load_short_interest
+from finance_app.db import load_short_interest, load_tiingo_context, upsert_tiingo_context
 from finance_app.ingest import get_or_fetch_ohlcv
 from finance_app.ingest.fred import DEFAULT_SERIES, get_or_fetch_macro, ingest_default_macro
+from finance_app.ingest.prices_tiingo import (
+    fetch_tiingo_meta,
+    fetch_tiingo_news,
+    tiingo_configured,
+)
 from finance_app.ingest.prices_yfinance import fetch_yfinance_short_snapshot
 from finance_app.ingest.short_interest import ingest_short_interest
 from finance_app.metrics import (
@@ -15,6 +20,8 @@ from finance_app.metrics import (
     compute_valuation_history,
     rolling_metrics_series,
 )
+
+TIINGO_CONTEXT_TTL_HOURS = 12
 
 
 def latest_risk_free_annual() -> float:
@@ -34,16 +41,30 @@ def symbol_metrics(
     end: Optional[str] = None,
     benchmark: Optional[str] = None,
     force_refresh: bool = False,
+    price_primary: Optional[str] = None,
 ) -> dict[str, Any]:
     settings = get_settings()
     benchmark = (benchmark or settings.default_benchmark).upper()
     symbol = symbol.upper()
+    primary = price_primary
 
-    ohlcv = get_or_fetch_ohlcv(symbol, start=start, end=end, force_refresh=force_refresh)
+    ohlcv = get_or_fetch_ohlcv(
+        symbol,
+        start=start,
+        end=end,
+        force_refresh=force_refresh,
+        price_primary=primary,
+    )
     if ohlcv.empty:
         return {"symbol": symbol, "error": "No price data available", "metrics": {}}
 
-    bench = get_or_fetch_ohlcv(benchmark, start=start, end=end, force_refresh=force_refresh)
+    bench = get_or_fetch_ohlcv(
+        benchmark,
+        start=start,
+        end=end,
+        force_refresh=force_refresh,
+        price_primary=primary,
+    )
     rf = latest_risk_free_annual()
     metrics = compute_price_metrics(ohlcv, benchmark_ohlcv=bench, risk_free_annual=rf)
     metrics["benchmark"] = benchmark
@@ -53,9 +74,67 @@ def symbol_metrics(
         "symbol": symbol,
         "metrics": metrics,
         "disclaimer": (
-            "Price data from free unofficial feeds (Yahoo via yfinance, Stooq fallback). "
+            "Price data uses PRICE_PRIMARY (tiingo|yfinance), then Stooq fallback. "
             "Not for live trading decisions."
         ),
+    }
+
+
+def symbol_tiingo_context(
+    symbol: str,
+    *,
+    news_limit: int = 8,
+    force_refresh: bool = False,
+) -> dict[str, Any]:
+    """Cached Tiingo meta + news for a symbol (empty when key unset)."""
+    from datetime import datetime, timedelta, timezone
+
+    symbol = symbol.upper()
+    if not tiingo_configured():
+        return {
+            "symbol": symbol,
+            "configured": False,
+            "meta": None,
+            "news": [],
+            "source": None,
+        }
+
+    if not force_refresh:
+        cached = load_tiingo_context(symbol)
+        if cached and cached.get("fetched_at"):
+            try:
+                fetched = datetime.fromisoformat(str(cached["fetched_at"]))
+                if fetched.tzinfo is None:
+                    fetched = fetched.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) - fetched < timedelta(
+                    hours=TIINGO_CONTEXT_TTL_HOURS
+                ):
+                    payload = cached.get("payload") or {}
+                    return {
+                        "symbol": symbol,
+                        "configured": True,
+                        "meta": payload.get("meta"),
+                        "news": payload.get("news") or [],
+                        "source": "tiingo",
+                        "freshness": "cached",
+                    }
+            except (TypeError, ValueError):
+                pass
+
+    meta = fetch_tiingo_meta(symbol)
+    news = fetch_tiingo_news(symbol, limit=news_limit)
+    payload = {"meta": meta, "news": news}
+    try:
+        upsert_tiingo_context(symbol, payload)
+    except Exception:
+        pass
+    return {
+        "symbol": symbol,
+        "configured": True,
+        "meta": meta,
+        "news": news,
+        "source": "tiingo",
+        "freshness": "live",
     }
 
 
@@ -64,8 +143,15 @@ def symbol_technicals(
     start: Optional[str] = None,
     end: Optional[str] = None,
     force_refresh: bool = False,
+    price_primary: Optional[str] = None,
 ) -> dict[str, Any]:
-    ohlcv = get_or_fetch_ohlcv(symbol, start=start, end=end, force_refresh=force_refresh)
+    ohlcv = get_or_fetch_ohlcv(
+        symbol,
+        start=start,
+        end=end,
+        force_refresh=force_refresh,
+        price_primary=price_primary,
+    )
     if ohlcv.empty:
         return {"symbol": symbol.upper(), "error": "No price data available"}
     tech = compute_technicals(ohlcv)
@@ -77,8 +163,15 @@ def symbol_history(
     start: Optional[str] = None,
     end: Optional[str] = None,
     force_refresh: bool = False,
+    price_primary: Optional[str] = None,
 ) -> dict[str, Any]:
-    ohlcv = get_or_fetch_ohlcv(symbol, start=start, end=end, force_refresh=force_refresh)
+    ohlcv = get_or_fetch_ohlcv(
+        symbol,
+        start=start,
+        end=end,
+        force_refresh=force_refresh,
+        price_primary=price_primary,
+    )
     if ohlcv.empty:
         return {"symbol": symbol.upper(), "bars": []}
     rows = []
@@ -105,8 +198,15 @@ def symbol_rolling(
     end: Optional[str] = None,
     window: int = 63,
     force_refresh: bool = False,
+    price_primary: Optional[str] = None,
 ) -> dict[str, Any]:
-    ohlcv = get_or_fetch_ohlcv(symbol, start=start, end=end, force_refresh=force_refresh)
+    ohlcv = get_or_fetch_ohlcv(
+        symbol,
+        start=start,
+        end=end,
+        force_refresh=force_refresh,
+        price_primary=price_primary,
+    )
     if ohlcv.empty:
         return {"symbol": symbol.upper(), "series": []}
     return {
@@ -156,6 +256,7 @@ def valuation_history_payload(
     start: Optional[str] = None,
     end: Optional[str] = None,
     force_refresh: bool = False,
+    earnings_primary: Optional[str] = None,
 ) -> dict[str, Any]:
     """Ensure data is cached and refresh earnings dates on every ticker load."""
     from finance_app.metrics.valuation_history import INDEX_BENCHMARKS
@@ -175,43 +276,35 @@ def valuation_history_payload(
         end=end,
         refresh=force_refresh,
         refresh_earnings=True,
+        earnings_primary=earnings_primary,
     )
 
 
-def refresh_symbol_earnings(symbol: str) -> dict[str, Any]:
-    """Fetch Yahoo earnings dates into earnings_events without full fundamentals rebuild."""
+def refresh_symbol_earnings(
+    symbol: str,
+    *,
+    earnings_primary: Optional[str] = None,
+) -> dict[str, Any]:
+    """Fetch earnings dates/EPS into earnings_events (FMP or yfinance)."""
     from finance_app.db import upsert_earnings_events
-    from finance_app.ingest.prices_yfinance import fetch_yfinance_earnings_events
+    from finance_app.ingest.earnings import (
+        earnings_frame_to_rows,
+        fetch_earnings_events_with_fallback,
+    )
 
     symbol = symbol.upper()
     try:
-        fetched = fetch_yfinance_earnings_events(symbol)
-    except Exception as exc:
-        return {"symbol": symbol, "upserted": 0, "error": str(exc)}
-    if fetched is None or fetched.empty:
-        return {"symbol": symbol, "upserted": 0}
-
-    def _round(v):
-        if v is None:
-            return None
-        try:
-            return round(float(v), 6)
-        except (TypeError, ValueError):
-            return None
-
-    rows = [
-        (
-            r["report_datetime"].isoformat()
-            if hasattr(r["report_datetime"], "isoformat")
-            else str(r["report_datetime"]),
-            _round(r.get("reported_eps")),
-            _round(r.get("eps_estimate")),
-            _round(r.get("surprise_pct")),
+        fetched, source = fetch_earnings_events_with_fallback(
+            symbol, earnings_primary=earnings_primary
         )
-        for _, r in fetched.iterrows()
-    ]
+    except Exception as exc:
+        return {"symbol": symbol, "upserted": 0, "source": None, "error": str(exc)}
+    if fetched is None or fetched.empty:
+        return {"symbol": symbol, "upserted": 0, "source": source}
+
+    rows = earnings_frame_to_rows(fetched)
     n = upsert_earnings_events(symbol, rows)
-    return {"symbol": symbol, "upserted": n}
+    return {"symbol": symbol, "upserted": n, "source": source}
 
 
 def earnings_calendar_payload(
@@ -220,13 +313,16 @@ def earnings_calendar_payload(
     end: Optional[str] = None,
     symbols: Optional[list[str]] = None,
     refresh: bool = False,
+    earnings_primary: Optional[str] = None,
 ) -> dict[str, Any]:
     """Upcoming/past earnings events for a date window, with trader context."""
     from datetime import datetime, timedelta, timezone
 
     import pandas as pd
 
+    from finance_app.config import get_settings
     from finance_app.db import load_earnings_events_range
+    from finance_app.ingest.earnings import effective_earnings_primary
     from finance_app.metrics.earnings_calendar import (
         enrich_event,
         refresh_analysis_batch,
@@ -239,26 +335,43 @@ def earnings_calendar_payload(
     if not end:
         end = (now + timedelta(days=45)).strftime("%Y-%m-%d")
 
+    primary = effective_earnings_primary(earnings_primary)
     tickers = [s.upper() for s in (symbols or DEFAULT_SCAN_SYMBOLS)][:15]
+    sources_used: list[str] = []
     if refresh:
         for sym in tickers:
             try:
-                refresh_symbol_earnings(sym)
+                result = refresh_symbol_earnings(sym, earnings_primary=primary)
+                if result.get("source"):
+                    sources_used.append(str(result["source"]))
             except Exception:
                 continue
-        # Warm Yahoo analysis snapshots (TTL-cached; parallel)
+        # Warm Yahoo analysis snapshots (TTL-cached; parallel) — best-effort
         try:
             refresh_analysis_batch(tickers, force=True)
         except Exception:
             pass
     else:
-        # Soft-warm analysis from cache / TTL without blocking on missing data
-        try:
-            refresh_analysis_batch(tickers, force=False)
-        except Exception:
-            pass
+        # Ensure we have at least cached rows; light refresh if empty for a ticker
+        for sym in tickers:
+            try:
+                existing = load_earnings_events_range(
+                    start=start, end=end + "T23:59:59", symbols=[sym]
+                )
+                if existing is None or existing.empty:
+                    result = refresh_symbol_earnings(sym, earnings_primary=primary)
+                    if result.get("source"):
+                        sources_used.append(str(result["source"]))
+            except Exception:
+                continue
 
     df = load_earnings_events_range(start=start, end=end + "T23:59:59", symbols=tickers)
+    # Soft-warm analysis from cache / TTL without blocking on missing data
+    try:
+        refresh_analysis_batch(tickers, force=False)
+    except Exception:
+        pass
+
     events: list[dict[str, Any]] = []
     for _, r in df.iterrows():
         report = r["report_datetime"]
@@ -286,17 +399,28 @@ def earnings_calendar_payload(
         except Exception:
             events.append(base)
 
+    source_label = primary
+    if sources_used:
+        # Majority source from this refresh
+        fmp_n = sum(1 for s in sources_used if s == "fmp")
+        yf_n = sum(1 for s in sources_used if s == "yfinance")
+        if fmp_n or yf_n:
+            source_label = "fmp" if fmp_n >= yf_n else "yfinance"
+
     return {
         "from": start,
         "to": end,
         "symbols": tickers,
         "events": events,
+        "earnings_primary": primary,
+        "source": source_label,
+        "fmp_configured": get_settings().fmp_configured,
         "disclaimer": (
-            "Earnings dates and estimates from Yahoo Finance via yfinance; times may "
-            "be estimates. Post-print moves use local price history. Options IV / "
-            "expected move use cached snapshots when available (visit a symbol's "
-            "options page to refresh). Company guidance flags and segment notes are "
-            "not available from Yahoo/EDGAR."
+            "Earnings dates and EPS prefer Financial Modeling Prep when "
+            "EARNINGS_PRIMARY=fmp (toggleable to Yahoo). Times may be estimates. "
+            "Post-print moves use local price history (Tiingo/Yahoo OHLCV). "
+            "Options IV / expected move use cached snapshots when available. "
+            "Analysis revision chips remain Yahoo best-effort."
         ),
     }
 

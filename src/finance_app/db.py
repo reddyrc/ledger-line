@@ -107,6 +107,12 @@ CREATE TABLE IF NOT EXISTS peer_cache (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS tiingo_context_cache (
+    symbol TEXT PRIMARY KEY,
+    payload_json TEXT NOT NULL,
+    fetched_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS options_chain_cache (
     cache_key TEXT PRIMARY KEY,
     symbol TEXT NOT NULL,
@@ -155,6 +161,7 @@ CREATE INDEX IF NOT EXISTS idx_macro_series ON macro_series(series_id);
 CREATE INDEX IF NOT EXISTS idx_screen_sector ON screen_snapshots(sector);
 CREATE INDEX IF NOT EXISTS idx_screen_pe ON screen_snapshots(pe);
 CREATE INDEX IF NOT EXISTS idx_peer_cache_symbol ON peer_cache(symbol);
+CREATE INDEX IF NOT EXISTS idx_tiingo_context_symbol ON tiingo_context_cache(symbol);
 CREATE INDEX IF NOT EXISTS idx_options_chain_symbol ON options_chain_cache(symbol);
 CREATE INDEX IF NOT EXISTS idx_options_contract_symbol ON options_contract_cache(contract_symbol);
 CREATE INDEX IF NOT EXISTS idx_options_strategy_symbol ON options_strategy_cache(symbol);
@@ -698,6 +705,44 @@ def get_peer_cache(cache_key: str) -> Optional[dict[str, Any]]:
             "peer_basis": row["peer_basis"],
             "payload": payload,
             "updated_at": datetime.fromisoformat(row["updated_at"]),
+        }
+
+
+def upsert_tiingo_context(symbol: str, payload: dict[str, Any]) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO tiingo_context_cache(symbol, payload_json, fetched_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(symbol) DO UPDATE SET
+                payload_json=excluded.payload_json,
+                fetched_at=excluded.fetched_at
+            """,
+            (symbol.upper(), json.dumps(payload), now),
+        )
+
+
+def load_tiingo_context(symbol: str) -> Optional[dict[str, Any]]:
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT symbol, payload_json, fetched_at
+            FROM tiingo_context_cache
+            WHERE symbol = ?
+            """,
+            (symbol.upper(),),
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            payload = json.loads(row["payload_json"])
+        except json.JSONDecodeError:
+            return None
+        return {
+            "symbol": row["symbol"],
+            "payload": payload,
+            "fetched_at": row["fetched_at"],
         }
 
 

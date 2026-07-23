@@ -14,7 +14,10 @@ from finance_app.db import (
     upsert_earnings_events,
 )
 from finance_app.ingest.edgar import ingest_fundamentals
-from finance_app.ingest.prices_yfinance import fetch_yfinance_earnings_events
+from finance_app.ingest.earnings import (
+    earnings_frame_to_rows,
+    fetch_earnings_events_with_fallback,
+)
 
 FILING_FORMS = {"10-K", "10-Q", "10-K/A", "10-Q/A"}
 
@@ -29,6 +32,7 @@ def compute_valuation_history(
     end: Optional[str] = None,
     refresh: bool = False,
     refresh_earnings: bool = False,
+    earnings_primary: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     Build daily PE / PB / PS / market-cap series by joining prices to
@@ -81,18 +85,13 @@ def compute_valuation_history(
     report_events = load_earnings_events(ticker)
     if data_refreshed or refresh_earnings:
         try:
-            fetched_events = fetch_yfinance_earnings_events(ticker)
-            rows = [
-                (
-                    r["report_datetime"].isoformat(),
-                    _round(r.get("reported_eps")),
-                    _round(r.get("eps_estimate")),
-                    _round(r.get("surprise_pct")),
-                )
-                for _, r in fetched_events.iterrows()
-            ]
-            upsert_earnings_events(ticker, rows)
-            report_events = load_earnings_events(ticker)
+            fetched_events, _source = fetch_earnings_events_with_fallback(
+                ticker, earnings_primary=earnings_primary
+            )
+            rows = earnings_frame_to_rows(fetched_events)
+            if rows:
+                upsert_earnings_events(ticker, rows)
+                report_events = load_earnings_events(ticker)
         except Exception:
             # Earnings returns remain unavailable rather than using a false date.
             pass

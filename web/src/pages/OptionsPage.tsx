@@ -10,7 +10,7 @@ import {
   YAxis,
 } from "recharts";
 
-import { useHistory, useOptionsChain, useOptionsContract } from "../api/hooks";
+import { useHistory, useOptionsChain, useOptionsContract, usePricePrimaryPreference } from "../api/hooks";
 import type { DateBounds } from "../api/hooks";
 import { IvEarningsChips, TermStructureTable } from "../components/IvEarningsChips";
 import { IvHistoryPanel } from "../components/IvHistoryPanel";
@@ -72,6 +72,7 @@ export function OptionsPage() {
   const [selected, setSelected] = useState<Selected | null>(null);
   const [period, setPeriod] = useState("3mo");
   const [showStock, setShowStock] = useState(false);
+  const [pricePrimary] = usePricePrimaryPreference();
 
   const chain = useOptionsChain(symbol, expiration);
 
@@ -128,6 +129,7 @@ export function OptionsPage() {
   const stockQuery = useHistory(
     symbol,
     stockBounds,
+    pricePrimary,
     showStock && Boolean(selected),
   );
   const contractChartData = useMemo(() => {

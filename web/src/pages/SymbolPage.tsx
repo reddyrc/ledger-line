@@ -23,10 +23,14 @@ import {
   useHistory,
   useMetrics,
   usePeers,
+  usePricePrimaryPreference,
+  useEarningsPrimaryPreference,
   useShortInterest,
+  useSymbolContext,
   useTechnicals,
   useValuationHistory,
 } from "../api/hooks";
+import type { EarningsPrimary, PricePrimary } from "../api/client";
 import { DateRangeControls } from "../components/DateRangeControls";
 import { FundamentalsPanel } from "../components/FundamentalsPanel";
 import { MetricStrip } from "../components/MetricStrip";
@@ -37,6 +41,7 @@ import { RollingRiskPanel } from "../components/RollingRiskPanel";
 import { SectionRangeControls } from "../components/SectionRangeControls";
 import { ShortInterestPanel } from "../components/ShortInterestPanel";
 import { TechnicalsPanel } from "../components/TechnicalsPanel";
+import { TiingoNewsPanel } from "../components/TiingoNewsPanel";
 import { ValuationHistoryPanel } from "../components/ValuationHistoryPanel";
 import { useSectionRange } from "../hooks/useSectionRange";
 import { normalizeTicker } from "../lib/format";
@@ -90,6 +95,8 @@ export function SymbolPage() {
     readCompareTickers(normalizeTicker(raw ?? "")),
   );
   const [refreshing, setRefreshing] = useState(false);
+  const [pricePrimary, setPricePrimary] = usePricePrimaryPreference();
+  const [earningsPrimary, setEarningsPrimary] = useEarningsPrimaryPreference();
   const qc = useQueryClient();
 
   // Reset compare list when navigating to a different primary symbol
@@ -112,8 +119,12 @@ export function SymbolPage() {
   const technicalsRange = useSectionRange(globalSelection);
   const rollingRange = useSectionRange(globalSelection);
 
-  const history = useHistory(symbol, priceRange.bounds);
-  const compareQueries = useHistories(compareTickers, priceRange.bounds);
+  const history = useHistory(symbol, priceRange.bounds, pricePrimary);
+  const compareQueries = useHistories(
+    compareTickers,
+    priceRange.bounds,
+    pricePrimary,
+  );
   const compareSeries = compareTickers.map((t, i) => ({
     symbol: t,
     bars: compareQueries[i]?.data?.bars ?? [],
@@ -129,10 +140,19 @@ export function SymbolPage() {
     writeCompareTickers(symbol, cleaned);
   }
 
-  const metrics = useMetrics(symbol, bounds, benchmark);
-  const technicals = useTechnicals(symbol, technicalsRange.bounds);
+  const metrics = useMetrics(symbol, bounds, benchmark, pricePrimary);
+  const context = useSymbolContext(symbol);
+  const technicals = useTechnicals(
+    symbol,
+    technicalsRange.bounds,
+    pricePrimary,
+  );
   const fundamentals = useFundamentals(symbol);
-  const valuation = useValuationHistory(symbol, valuationRange.bounds);
+  const valuation = useValuationHistory(
+    symbol,
+    valuationRange.bounds,
+    earningsPrimary,
+  );
   const shortInterest = useShortInterest(symbol, shortInterestRange.bounds);
   const peers = usePeers(symbol, 12, customPeers);
 
@@ -162,7 +182,10 @@ export function SymbolPage() {
     }));
   }
 
-  async function onRefresh() {
+  async function onRefresh(
+    source: PricePrimary = pricePrimary,
+    earningsSource: EarningsPrimary = earningsPrimary,
+  ) {
     if (!symbol || refreshing) return;
     setRefreshing(true);
     try {
@@ -171,23 +194,27 @@ export function SymbolPage() {
           start: priceRange.bounds.start,
           end: priceRange.bounds.end,
           refresh: true,
+          price_source: source,
         }),
         fetchMetrics(symbol, {
           start: bounds.start,
           end: bounds.end,
           benchmark,
           refresh: true,
+          price_source: source,
         }),
         fetchTechnicals(symbol, {
           start: technicalsRange.bounds.start,
           end: technicalsRange.bounds.end,
           refresh: true,
+          price_source: source,
         }),
         fetchFundamentals(symbol, { refresh: true }),
         fetchValuationHistory(symbol, {
           start: valuationRange.bounds.start,
           end: valuationRange.bounds.end,
           refresh: true,
+          earnings_source: earningsSource,
         }),
         fetchShortInterest(symbol, {
           start: shortInterestRange.bounds.start,
@@ -204,10 +231,23 @@ export function SymbolPage() {
         qc.invalidateQueries({ queryKey: ["valuation-history", symbol] }),
         qc.invalidateQueries({ queryKey: ["short-interest", symbol] }),
         qc.invalidateQueries({ queryKey: ["peers", symbol] }),
+        qc.invalidateQueries({ queryKey: ["symbol-context", symbol] }),
       ]);
     } finally {
       setRefreshing(false);
     }
+  }
+
+  async function onPricePrimaryChange(next: PricePrimary) {
+    if (next === pricePrimary) return;
+    setPricePrimary(next);
+    await onRefresh(next, earningsPrimary);
+  }
+
+  async function onEarningsPrimaryChange(next: EarningsPrimary) {
+    if (next === earningsPrimary) return;
+    setEarningsPrimary(next);
+    await onRefresh(pricePrimary, next);
   }
 
   if (!symbol) {
@@ -219,13 +259,68 @@ export function SymbolPage() {
       <div className="symbol-header">
         <div>
           <h1 className="symbol-title mono">{symbol}</h1>
+          {context.data?.meta?.name && (
+            <p className="symbol-company-name">{context.data.meta.name}</p>
+          )}
           <p className="muted small">
-            {metrics.data?.metrics.start ?? bounds.start ?? "—"} →{" "}
-            {metrics.data?.metrics.end ?? bounds.end ?? "—"}
-            {metrics.data?.metrics.source
-              ? ` · ${metrics.data.metrics.source}`
-              : ""}
+            {[
+              context.data?.meta?.exchange,
+              `${metrics.data?.metrics.start ?? bounds.start ?? "—"} → ${
+                metrics.data?.metrics.end ?? bounds.end ?? "—"
+              }`,
+              metrics.data?.metrics.source
+                ? metrics.data.metrics.source
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           </p>
+          <div
+            className="price-primary-toggle"
+            role="group"
+            aria-label="Price data provider"
+          >
+            <span className="muted small">Prices</span>
+            <button
+              type="button"
+              className={`chart-toggle-btn${pricePrimary === "tiingo" ? " active" : ""}`}
+              disabled={refreshing}
+              onClick={() => void onPricePrimaryChange("tiingo")}
+            >
+              Tiingo
+            </button>
+            <button
+              type="button"
+              className={`chart-toggle-btn${pricePrimary === "yfinance" ? " active" : ""}`}
+              disabled={refreshing}
+              onClick={() => void onPricePrimaryChange("yfinance")}
+            >
+              Yahoo
+            </button>
+          </div>
+          <div
+            className="price-primary-toggle"
+            role="group"
+            aria-label="Earnings data provider"
+          >
+            <span className="muted small">Earnings</span>
+            <button
+              type="button"
+              className={`chart-toggle-btn${earningsPrimary === "fmp" ? " active" : ""}`}
+              disabled={refreshing}
+              onClick={() => void onEarningsPrimaryChange("fmp")}
+            >
+              FMP
+            </button>
+            <button
+              type="button"
+              className={`chart-toggle-btn${earningsPrimary === "yfinance" ? " active" : ""}`}
+              disabled={refreshing}
+              onClick={() => void onEarningsPrimaryChange("yfinance")}
+            >
+              Yahoo
+            </button>
+          </div>
         </div>
         <div className="controls">
           <DateRangeControls
@@ -381,6 +476,11 @@ export function SymbolPage() {
         <FundamentalsPanel
           data={fundamentals.data}
           loading={fundamentals.isLoading}
+        />
+        <TiingoNewsPanel
+          news={context.data?.news ?? []}
+          loading={context.isLoading}
+          configured={context.data?.configured}
         />
       </div>
 

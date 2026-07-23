@@ -16,6 +16,7 @@ import type {
   StrategiesResponse,
   StrategiesScanResponse,
   StrategyDetailResponse,
+  SymbolContextResponse,
   TechnicalsResponse,
   UoaResponse,
   ValuationHistoryResponse,
@@ -58,9 +59,28 @@ function qs(params: Record<string, string | boolean | undefined | null>): string
   return s ? `?${s}` : "";
 }
 
+export type PricePrimary = "tiingo" | "yfinance";
+export type EarningsPrimary = "fmp" | "yfinance";
+
+export type AppConfigResponse = {
+  price_primary: PricePrimary;
+  tiingo_configured: boolean;
+  earnings_primary: EarningsPrimary;
+  fmp_configured: boolean;
+};
+
+export function fetchAppConfig(signal?: AbortSignal) {
+  return getJson<AppConfigResponse>("/config", signal);
+}
+
 export function fetchHistory(
   symbol: string,
-  opts: { start?: string; end?: string; refresh?: boolean } = {},
+  opts: {
+    start?: string;
+    end?: string;
+    refresh?: boolean;
+    price_source?: PricePrimary;
+  } = {},
   signal?: AbortSignal,
 ) {
   return getJson<HistoryResponse>(
@@ -76,6 +96,7 @@ export function fetchMetrics(
     end?: string;
     benchmark?: string;
     refresh?: boolean;
+    price_source?: PricePrimary;
   } = {},
   signal?: AbortSignal,
 ) {
@@ -85,9 +106,29 @@ export function fetchMetrics(
   );
 }
 
+export function fetchSymbolContext(
+  symbol: string,
+  opts: { refresh?: boolean; news_limit?: number } = {},
+  signal?: AbortSignal,
+) {
+  return getJson<SymbolContextResponse>(
+    `/symbols/${encodeURIComponent(symbol)}/context${qs({
+      refresh: opts.refresh,
+      news_limit:
+        opts.news_limit != null ? String(opts.news_limit) : undefined,
+    })}`,
+    signal,
+  );
+}
+
 export function fetchTechnicals(
   symbol: string,
-  opts: { start?: string; end?: string; refresh?: boolean } = {},
+  opts: {
+    start?: string;
+    end?: string;
+    refresh?: boolean;
+    price_source?: PricePrimary;
+  } = {},
   signal?: AbortSignal,
 ) {
   return getJson<TechnicalsResponse>(
@@ -109,7 +150,12 @@ export function fetchFundamentals(
 
 export function fetchValuationHistory(
   symbol: string,
-  opts: { start?: string; end?: string; refresh?: boolean } = {},
+  opts: {
+    start?: string;
+    end?: string;
+    refresh?: boolean;
+    earnings_source?: EarningsPrimary;
+  } = {},
   signal?: AbortSignal,
 ) {
   return getJson<ValuationHistoryResponse>(
@@ -300,6 +346,7 @@ export function fetchRolling(
     end?: string;
     window?: number;
     refresh?: boolean;
+    price_source?: PricePrimary;
   } = {},
   signal?: AbortSignal,
 ) {
@@ -309,6 +356,7 @@ export function fetchRolling(
       end: opts.end,
       window: opts.window != null ? String(opts.window) : undefined,
       refresh: opts.refresh ? true : undefined,
+      price_source: opts.price_source,
     })}`,
     signal,
   );
@@ -320,6 +368,7 @@ export function fetchEarningsCalendar(
     end?: string;
     symbols?: string[];
     refresh?: boolean;
+    earnings_source?: EarningsPrimary;
   } = {},
   signal?: AbortSignal,
 ) {
@@ -329,6 +378,7 @@ export function fetchEarningsCalendar(
       end: opts.end,
       symbols: opts.symbols?.length ? opts.symbols.join(",") : undefined,
       refresh: opts.refresh ? true : undefined,
+      earnings_source: opts.earnings_source,
     })}`,
     signal,
   );
