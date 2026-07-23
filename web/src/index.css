@@ -392,6 +392,119 @@ input {
   gap: 1.1rem;
 }
 
+.symbol-page-layout {
+  display: grid;
+  grid-template-columns: 11.5rem minmax(0, 1fr);
+  gap: 1.25rem 1.5rem;
+  align-items: start;
+}
+
+.symbol-page-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+  min-width: 0;
+}
+
+.symbol-section {
+  scroll-margin-top: 5.25rem;
+}
+
+.symbol-section-nav {
+  position: sticky;
+  top: 4.5rem;
+  align-self: start;
+  padding: 0.35rem 0;
+}
+
+.symbol-section-nav-label {
+  margin: 0 0 0.55rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.72rem;
+}
+
+.symbol-section-nav-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  border-left: 1px solid var(--border);
+}
+
+.symbol-section-nav-link {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.88rem;
+  padding: 0.35rem 0.65rem 0.35rem 0.85rem;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  margin-left: -1px;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.symbol-section-nav-link:hover {
+  color: var(--text);
+  background: var(--nav-hover-bg);
+}
+
+.symbol-section-nav-link.active {
+  color: var(--accent);
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+@media (max-width: 900px) {
+  .symbol-page-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .symbol-section-nav {
+    position: sticky;
+    top: 3.6rem;
+    z-index: 15;
+    margin: 0 -0.25rem;
+    padding: 0.35rem 0;
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .symbol-section-nav-label {
+    display: none;
+  }
+
+  .symbol-section-nav-list {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 0.35rem;
+    border-left: 0;
+    padding: 0.15rem 0.25rem 0.45rem;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .symbol-section-nav-link {
+    white-space: nowrap;
+    border-left: 0;
+    margin-left: 0;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    padding: 0.35rem 0.75rem;
+  }
+
+  .symbol-section-nav-link.active {
+    border-color: var(--accent);
+  }
+}
+
 .symbol-header {
   display: flex;
   flex-wrap: wrap;
