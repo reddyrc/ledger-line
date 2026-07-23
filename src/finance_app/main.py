@@ -28,7 +28,7 @@ app = FastAPI(
     title="Ledgerline API",
     description=(
         "Historical quant metrics from free data sources: "
-        "yfinance/Stooq (prices), SEC EDGAR (fundamentals), FRED (macro)."
+        "Tiingo/Stooq/yfinance (prices), SEC EDGAR (fundamentals), FRED (macro)."
     ),
     version=__version__,
     lifespan=lifespan,
@@ -57,9 +57,13 @@ def api_root() -> dict:
         "version": __version__,
         "docs": "/docs",
         "sources": {
-            "prices": ["yfinance", "stooq"],
+            "prices": ["tiingo", "stooq", "yfinance"],
+            "price_primary": get_settings().price_primary_normalized,
+            "earnings": ["fmp", "yfinance"],
+            "earnings_primary": get_settings().earnings_primary_normalized,
             "fundamentals": ["sec_edgar"],
             "macro": ["fred"],
+            "news": ["tiingo"],
         },
     }
 
@@ -118,8 +122,12 @@ else:
             "docs": "/docs",
             "hint": "UI not bundled — run Vite locally or build web/dist",
             "sources": {
-                "prices": ["yfinance", "stooq"],
+                "prices": ["tiingo", "stooq", "yfinance"],
+                "price_primary": get_settings().price_primary_normalized,
+                "earnings": ["fmp", "yfinance"],
+                "earnings_primary": get_settings().earnings_primary_normalized,
                 "fundamentals": ["sec_edgar"],
                 "macro": ["fred"],
+                "news": ["tiingo"],
             },
         }

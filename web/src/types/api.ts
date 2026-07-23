@@ -39,6 +39,32 @@ export type MetricsResponse = {
   error?: string;
 };
 
+export type TiingoMeta = {
+  ticker?: string;
+  name?: string | null;
+  exchange?: string | null;
+  description?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+};
+
+export type TiingoNewsItem = {
+  title?: string | null;
+  url?: string | null;
+  published?: string | null;
+  source?: string | null;
+  description?: string | null;
+};
+
+export type SymbolContextResponse = {
+  symbol: string;
+  configured: boolean;
+  meta: TiingoMeta | null;
+  news: TiingoNewsItem[];
+  source?: string | null;
+  freshness?: string | null;
+};
+
 export type TechnicalsLatest = {
   date: string;
   price: number;
@@ -639,6 +665,9 @@ export type EarningsCalendarResponse = {
   to: string;
   symbols: string[];
   events: EarningsCalendarEvent[];
+  earnings_primary?: "fmp" | "yfinance";
+  source?: "fmp" | "yfinance" | string;
+  fmp_configured?: boolean;
   disclaimer?: string;
 };
 

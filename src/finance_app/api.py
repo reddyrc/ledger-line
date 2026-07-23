@@ -4,7 +4,13 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
+from finance_app.config import (
+    get_settings,
+    normalize_earnings_primary,
+    normalize_price_primary,
+)
 from finance_app.ingest.fred import DEFAULT_SERIES
+from finance_app.ingest.prices_tiingo import tiingo_configured
 from finance_app.metrics.option_strategies import (
     strategies_scan,
     strategy_detail,
@@ -25,15 +31,55 @@ from finance_app.services import (
     symbol_metrics,
     symbol_rolling,
     symbol_technicals,
+    symbol_tiingo_context,
     valuation_history_payload,
 )
 
 router = APIRouter()
 
 
+def _parse_price_source(price_source: Optional[str]) -> Optional[str]:
+    if price_source is None or str(price_source).strip() == "":
+        return None
+    raw = str(price_source).strip().lower()
+    if raw not in ("tiingo", "yfinance"):
+        raise HTTPException(
+            status_code=400,
+            detail="price_source must be 'tiingo' or 'yfinance'",
+        )
+    return normalize_price_primary(price_source)
+
+
+def _parse_earnings_source(earnings_source: Optional[str]) -> Optional[str]:
+    if earnings_source is None or str(earnings_source).strip() == "":
+        return None
+    raw = str(earnings_source).strip().lower()
+    if raw not in ("fmp", "yfinance"):
+        raise HTTPException(
+            status_code=400,
+            detail="earnings_source must be 'fmp' or 'yfinance'",
+        )
+    settings = get_settings()
+    return normalize_earnings_primary(
+        raw, fmp_configured=settings.fmp_configured
+    )
+
+
 @router.get("/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+@router.get("/config")
+def get_app_config() -> dict:
+    """Deploy defaults the UI can seed from (no secrets)."""
+    settings = get_settings()
+    return {
+        "price_primary": settings.price_primary_normalized,
+        "tiingo_configured": tiingo_configured(),
+        "earnings_primary": settings.earnings_primary_normalized,
+        "fmp_configured": settings.fmp_configured,
+    }
 
 
 @router.get("/symbols/{symbol}/history")
@@ -42,8 +88,17 @@ def get_history(
     start: Optional[str] = Query(None, description="YYYY-MM-DD"),
     end: Optional[str] = Query(None, description="YYYY-MM-DD"),
     refresh: bool = Query(False, description="Force re-fetch from free price sources"),
+    price_source: Optional[str] = Query(
+        None, description="Override PRICE_PRIMARY: tiingo | yfinance"
+    ),
 ) -> dict:
-    return symbol_history(symbol, start=start, end=end, force_refresh=refresh)
+    return symbol_history(
+        symbol,
+        start=start,
+        end=end,
+        force_refresh=refresh,
+        price_primary=_parse_price_source(price_source),
+    )
 
 
 @router.get("/symbols/{symbol}/metrics")
@@ -53,13 +108,33 @@ def get_metrics(
     end: Optional[str] = Query(None),
     benchmark: Optional[str] = Query(None, description="Benchmark ticker, default SPY"),
     refresh: bool = False,
+    price_source: Optional[str] = Query(
+        None, description="Override PRICE_PRIMARY: tiingo | yfinance"
+    ),
 ) -> dict:
     result = symbol_metrics(
-        symbol, start=start, end=end, benchmark=benchmark, force_refresh=refresh
+        symbol,
+        start=start,
+        end=end,
+        benchmark=benchmark,
+        force_refresh=refresh,
+        price_primary=_parse_price_source(price_source),
     )
     if result.get("error"):
         raise HTTPException(status_code=404, detail=result["error"])
     return result
+
+
+@router.get("/symbols/{symbol}/context")
+def get_symbol_context(
+    symbol: str,
+    refresh: bool = Query(False, description="Bypass Tiingo context cache"),
+    news_limit: int = Query(8, ge=1, le=25),
+) -> dict:
+    """Tiingo ticker meta + recent news (requires TIINGO_API_KEY)."""
+    return symbol_tiingo_context(
+        symbol, news_limit=news_limit, force_refresh=refresh
+    )
 
 
 @router.get("/symbols/{symbol}/technicals")
@@ -68,8 +143,17 @@ def get_technicals(
     start: Optional[str] = None,
     end: Optional[str] = None,
     refresh: bool = False,
+    price_source: Optional[str] = Query(
+        None, description="Override PRICE_PRIMARY: tiingo | yfinance"
+    ),
 ) -> dict:
-    result = symbol_technicals(symbol, start=start, end=end, force_refresh=refresh)
+    result = symbol_technicals(
+        symbol,
+        start=start,
+        end=end,
+        force_refresh=refresh,
+        price_primary=_parse_price_source(price_source),
+    )
     if result.get("error"):
         raise HTTPException(status_code=404, detail=result["error"])
     return result
@@ -82,9 +166,17 @@ def get_rolling(
     end: Optional[str] = None,
     window: int = Query(63, ge=5, le=504),
     refresh: bool = False,
+    price_source: Optional[str] = Query(
+        None, description="Override PRICE_PRIMARY: tiingo | yfinance"
+    ),
 ) -> dict:
     return symbol_rolling(
-        symbol, start=start, end=end, window=window, force_refresh=refresh
+        symbol,
+        start=start,
+        end=end,
+        window=window,
+        force_refresh=refresh,
+        price_primary=_parse_price_source(price_source),
     )
 
 
@@ -107,9 +199,16 @@ def get_valuation_history(
     refresh: bool = Query(
         False, description="Re-fetch prices and SEC EDGAR companyfacts"
     ),
+    earnings_source: Optional[str] = Query(
+        None, description="Override EARNINGS_PRIMARY: fmp | yfinance"
+    ),
 ) -> dict:
     result = valuation_history_payload(
-        symbol, start=start, end=end, force_refresh=refresh
+        symbol,
+        start=start,
+        end=end,
+        force_refresh=refresh,
+        earnings_primary=_parse_earnings_source(earnings_source),
     )
     if result.get("error") and not result.get("series"):
         raise HTTPException(status_code=404, detail=result["error"])
@@ -309,11 +408,20 @@ def get_earnings_calendar(
     symbols: Optional[str] = Query(
         None, description="Comma-separated tickers; default liquid watchlist"
     ),
-    refresh: bool = Query(False, description="Refresh Yahoo earnings for listed symbols"),
+    refresh: bool = Query(
+        False, description="Refresh earnings for listed symbols from preferred provider"
+    ),
+    earnings_source: Optional[str] = Query(
+        None, description="Override EARNINGS_PRIMARY: fmp | yfinance"
+    ),
 ) -> dict:
     tickers = [s.strip() for s in symbols.split(",") if s.strip()] if symbols else None
     return earnings_calendar_payload(
-        start=start, end=end, symbols=tickers, refresh=refresh
+        start=start,
+        end=end,
+        symbols=tickers,
+        refresh=refresh,
+        earnings_primary=_parse_earnings_source(earnings_source),
     )
 
 

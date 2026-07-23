@@ -1,7 +1,9 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 
 import {
   bootstrapMacro,
+  fetchAppConfig,
   fetchFundamentals,
   fetchHistory,
   fetchMacroList,
@@ -22,9 +24,20 @@ import {
   fetchTechnicals,
   fetchValuationHistory,
   fetchShortInterest,
+  fetchSymbolContext,
   refreshScreen,
+  type EarningsPrimary,
+  type PricePrimary,
   type ScreenQuery,
 } from "./client";
+import {
+  readStoredEarningsPrimary,
+  writeStoredEarningsPrimary,
+} from "../lib/earningsPrimary";
+import {
+  readStoredPricePrimary,
+  writeStoredPricePrimary,
+} from "../lib/pricePrimary";
 
 /** Preset historic windows (plus custom via DateBounds). */
 export type RangePreset = "1Y" | "2Y" | "3Y" | "5Y" | "10Y" | "ALL";
@@ -106,17 +119,93 @@ export function startForRange(range: RangePreset): string | undefined {
   return startForPreset(range);
 }
 
+export function useAppConfig() {
+  return useQuery({
+    queryKey: ["app-config"],
+    queryFn: ({ signal }) => fetchAppConfig(signal),
+    staleTime: 60 * 60_000,
+  });
+}
+
+/**
+ * Price provider preference: localStorage override, else deploy PRICE_PRIMARY.
+ * Returns [primary, setPrimary] — setPrimary persists to localStorage.
+ */
+export function usePricePrimaryPreference(): [
+  PricePrimary,
+  (next: PricePrimary) => void,
+] {
+  const config = useAppConfig();
+  const [primary, setPrimaryState] = useState<PricePrimary>(
+    () => readStoredPricePrimary() ?? "tiingo",
+  );
+
+  useEffect(() => {
+    if (readStoredPricePrimary()) return;
+    const deploy = config.data?.price_primary;
+    if (deploy === "tiingo" || deploy === "yfinance") {
+      setPrimaryState(deploy);
+    }
+  }, [config.data?.price_primary]);
+
+  function setPrimary(next: PricePrimary) {
+    writeStoredPricePrimary(next);
+    setPrimaryState(next);
+  }
+
+  return [primary, setPrimary];
+}
+
+/**
+ * Earnings provider preference: localStorage override, else EARNINGS_PRIMARY.
+ */
+export function useEarningsPrimaryPreference(): [
+  EarningsPrimary,
+  (next: EarningsPrimary) => void,
+] {
+  const config = useAppConfig();
+  const [primary, setPrimaryState] = useState<EarningsPrimary>(
+    () => readStoredEarningsPrimary() ?? "fmp",
+  );
+
+  useEffect(() => {
+    if (readStoredEarningsPrimary()) return;
+    const deploy = config.data?.earnings_primary;
+    if (deploy === "fmp" || deploy === "yfinance") {
+      setPrimaryState(deploy);
+    }
+  }, [config.data?.earnings_primary]);
+
+  function setPrimary(next: EarningsPrimary) {
+    writeStoredEarningsPrimary(next);
+    setPrimaryState(next);
+  }
+
+  return [primary, setPrimary];
+}
+
 export function useHistory(
   symbol: string,
   bounds: DateBounds,
+  priceSource: PricePrimary = "tiingo",
   enabled = true,
 ) {
   return useQuery({
-    queryKey: ["history", symbol, bounds.start ?? null, bounds.end ?? null],
+    queryKey: [
+      "history",
+      symbol,
+      bounds.start ?? null,
+      bounds.end ?? null,
+      priceSource,
+    ],
     queryFn: ({ signal }) =>
       fetchHistory(
         symbol,
-        { start: bounds.start, end: bounds.end },
+        {
+          start: bounds.start,
+          end: bounds.end,
+          price_source: priceSource,
+        },
         signal,
       ),
     enabled: Boolean(symbol) && enabled,
@@ -124,14 +213,28 @@ export function useHistory(
 }
 
 /** Fetch OHLCV for several compare tickers in parallel. */
-export function useHistories(symbols: string[], bounds: DateBounds) {
+export function useHistories(
+  symbols: string[],
+  bounds: DateBounds,
+  priceSource: PricePrimary = "tiingo",
+) {
   return useQueries({
     queries: symbols.map((symbol) => ({
-      queryKey: ["history", symbol, bounds.start ?? null, bounds.end ?? null],
+      queryKey: [
+        "history",
+        symbol,
+        bounds.start ?? null,
+        bounds.end ?? null,
+        priceSource,
+      ],
       queryFn: ({ signal }: { signal?: AbortSignal }) =>
         fetchHistory(
           symbol,
-          { start: bounds.start, end: bounds.end },
+          {
+            start: bounds.start,
+            end: bounds.end,
+            price_source: priceSource,
+          },
           signal,
         ),
       enabled: Boolean(symbol),
@@ -143,6 +246,7 @@ export function useMetrics(
   symbol: string,
   bounds: DateBounds,
   benchmark: string,
+  priceSource: PricePrimary = "tiingo",
 ) {
   return useQuery({
     queryKey: [
@@ -151,24 +255,53 @@ export function useMetrics(
       bounds.start ?? null,
       bounds.end ?? null,
       benchmark,
+      priceSource,
     ],
     queryFn: ({ signal }) =>
       fetchMetrics(
         symbol,
-        { start: bounds.start, end: bounds.end, benchmark },
+        {
+          start: bounds.start,
+          end: bounds.end,
+          benchmark,
+          price_source: priceSource,
+        },
         signal,
       ),
     enabled: Boolean(symbol),
   });
 }
 
-export function useTechnicals(symbol: string, bounds: DateBounds) {
+export function useSymbolContext(symbol: string) {
   return useQuery({
-    queryKey: ["technicals", symbol, bounds.start ?? null, bounds.end ?? null],
+    queryKey: ["symbol-context", symbol],
+    queryFn: ({ signal }) => fetchSymbolContext(symbol, {}, signal),
+    enabled: Boolean(symbol),
+    staleTime: 30 * 60_000,
+  });
+}
+
+export function useTechnicals(
+  symbol: string,
+  bounds: DateBounds,
+  priceSource: PricePrimary = "tiingo",
+) {
+  return useQuery({
+    queryKey: [
+      "technicals",
+      symbol,
+      bounds.start ?? null,
+      bounds.end ?? null,
+      priceSource,
+    ],
     queryFn: ({ signal }) =>
       fetchTechnicals(
         symbol,
-        { start: bounds.start, end: bounds.end },
+        {
+          start: bounds.start,
+          end: bounds.end,
+          price_source: priceSource,
+        },
         signal,
       ),
     enabled: Boolean(symbol),
@@ -183,18 +316,27 @@ export function useFundamentals(symbol: string) {
   });
 }
 
-export function useValuationHistory(symbol: string, bounds: DateBounds) {
+export function useValuationHistory(
+  symbol: string,
+  bounds: DateBounds,
+  earningsSource: EarningsPrimary = "fmp",
+) {
   return useQuery({
     queryKey: [
       "valuation-history",
       symbol,
       bounds.start ?? null,
       bounds.end ?? null,
+      earningsSource,
     ],
     queryFn: ({ signal }) =>
       fetchValuationHistory(
         symbol,
-        { start: bounds.start, end: bounds.end },
+        {
+          start: bounds.start,
+          end: bounds.end,
+          earnings_source: earningsSource,
+        },
         signal,
       ),
     enabled: Boolean(symbol),
@@ -365,7 +507,13 @@ export function useStrategiesScan(
 }
 
 export function useEarningsCalendar(
-  opts: { start?: string; end?: string; symbols?: string[]; refresh?: boolean } = {},
+  opts: {
+    start?: string;
+    end?: string;
+    symbols?: string[];
+    refresh?: boolean;
+    earnings_source?: EarningsPrimary;
+  } = {},
   enabled = true,
 ) {
   return useQuery({
@@ -375,6 +523,7 @@ export function useEarningsCalendar(
       opts.end ?? null,
       opts.symbols ?? null,
       opts.refresh ?? false,
+      opts.earnings_source ?? null,
     ],
     queryFn: ({ signal }) => fetchEarningsCalendar(opts, signal),
     enabled,

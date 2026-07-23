@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { useEarningsCalendar } from "../api/hooks";
+import { useEarningsCalendar, useEarningsPrimaryPreference } from "../api/hooks";
+import type { EarningsPrimary } from "../api/client";
 import { fmtCompact, fmtNum, fmtPct, fmtPrice, normalizeTicker } from "../lib/format";
 import { useSeo } from "../lib/seo";
 import type { EarningsCalendarEvent } from "../types/api";
@@ -9,7 +10,7 @@ import type { EarningsCalendarEvent } from "../types/api";
 const DEFAULT =
   "SPY,QQQ,IWM,AAPL,MSFT,NVDA,AMZN,META,GOOGL,TSLA";
 
-/** Yahoo Surprise(%) is percent points (3.5 = +3.5%), not a decimal fraction. */
+/** Surprise(%) is percent points (3.5 = +3.5%), not a decimal fraction. */
 function fmtSurprise(n: number | null | undefined): string {
   if (n == null || Number.isNaN(n)) return "—";
   const sign = n > 0 ? "+" : "";
@@ -47,9 +48,14 @@ export function EarningsPage() {
       .filter(Boolean),
   );
   const [wantRefresh, setWantRefresh] = useState(false);
+  const [earningsPrimary, setEarningsPrimary] = useEarningsPrimaryPreference();
 
   const cal = useEarningsCalendar(
-    { symbols, refresh: wantRefresh },
+    {
+      symbols,
+      refresh: wantRefresh,
+      earnings_source: earningsPrimary,
+    },
     symbols.length > 0,
   );
 
@@ -61,6 +67,12 @@ export function EarningsPage() {
 
   const events = useMemo(() => cal.data?.events ?? [], [cal.data?.events]);
 
+  function onEarningsPrimaryChange(next: EarningsPrimary) {
+    if (next === earningsPrimary) return;
+    setEarningsPrimary(next);
+    setWantRefresh(true);
+  }
+
   return (
     <div className="earnings-page fade-in">
       <div className="symbol-header">
@@ -69,7 +81,31 @@ export function EarningsPage() {
           <p className="muted small">
             Upcoming reports with estimates, typical post-print moves, and cached
             options context. Times may be estimates.
+            {cal.data?.source ? ` · source ${cal.data.source}` : ""}
           </p>
+          <div
+            className="price-primary-toggle"
+            role="group"
+            aria-label="Earnings data provider"
+          >
+            <span className="muted small">Earnings</span>
+            <button
+              type="button"
+              className={`chart-toggle-btn${earningsPrimary === "fmp" ? " active" : ""}`}
+              disabled={cal.isFetching}
+              onClick={() => onEarningsPrimaryChange("fmp")}
+            >
+              FMP
+            </button>
+            <button
+              type="button"
+              className={`chart-toggle-btn${earningsPrimary === "yfinance" ? " active" : ""}`}
+              disabled={cal.isFetching}
+              onClick={() => onEarningsPrimaryChange("yfinance")}
+            >
+              Yahoo
+            </button>
+          </div>
         </div>
       </div>
 
@@ -103,7 +139,8 @@ export function EarningsPage() {
 
       {!cal.isLoading && events.length === 0 && (
         <div className="empty-panel">
-          No earnings events in range. Try Load to refresh from Yahoo.
+          No earnings events in range. Try Load to refresh from{" "}
+          {earningsPrimary === "fmp" ? "FMP" : "Yahoo"}.
         </div>
       )}
 
@@ -118,7 +155,7 @@ export function EarningsPage() {
                   <th title="Calendar days until the report.">Days</th>
                   <th title="Latest close from local price history.">Spot</th>
                   <th title="Consensus EPS estimate for this report.">Est EPS</th>
-                  <th title="Reported EPS vs estimate (Yahoo Surprise %).">
+                  <th title="Reported EPS vs estimate (surprise %).">
                     Surprise
                   </th>
                   <th title="Surprise % on the prior earnings report.">
