@@ -11,7 +11,7 @@ export function Layout() {
           <span className="brand-mark">◈</span>
           <span className="brand-name">Ledgerline</span>
         </Link>
-        <nav className="nav">
+        <nav className="nav" aria-label="Primary">
           <NavLink to="/" end>
             Explore
           </NavLink>
@@ -20,9 +20,11 @@ export function Layout() {
           <NavLink to="/screen">Screener</NavLink>
           <NavLink to="/macro">Macro</NavLink>
         </nav>
+        <div className="topbar-search">
+          <TickerSearch compact />
+        </div>
         <div className="topbar-end">
           <ThemeToggle />
-          <TickerSearch compact />
         </div>
       </header>
       <main className="main">
