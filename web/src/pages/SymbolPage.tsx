@@ -40,6 +40,7 @@ import { PriceChart } from "../components/PriceChart";
 import { RollingRiskPanel } from "../components/RollingRiskPanel";
 import { SectionRangeControls } from "../components/SectionRangeControls";
 import { ShortInterestPanel } from "../components/ShortInterestPanel";
+import { SymbolSectionNav } from "../components/SymbolSectionNav";
 import { TechnicalsPanel } from "../components/TechnicalsPanel";
 import { TiingoNewsPanel } from "../components/TiingoNewsPanel";
 import { ValuationHistoryPanel } from "../components/ValuationHistoryPanel";
@@ -48,6 +49,19 @@ import { normalizeTicker } from "../lib/format";
 import { useSeo } from "../lib/seo";
 
 const COMPARE_KEY = "ledgerline.price.compare";
+
+const SYMBOL_SECTIONS = [
+  { id: "overview", label: "Overview" },
+  { id: "price", label: "Price" },
+  { id: "valuation", label: "Valuation" },
+  { id: "short-interest", label: "Short interest" },
+  { id: "peers", label: "Peers" },
+  { id: "options", label: "Options" },
+  { id: "rolling-risk", label: "Rolling risk" },
+  { id: "technicals", label: "Technicals" },
+  { id: "fundamentals", label: "Fundamentals" },
+  { id: "news", label: "News" },
+] as const;
 
 function readCompareTickers(primary: string): string[] {
   try {
@@ -256,6 +270,9 @@ export function SymbolPage() {
 
   return (
     <div className="symbol-page fade-in">
+      <div className="symbol-page-layout">
+        <SymbolSectionNav sections={[...SYMBOL_SECTIONS]} />
+        <div className="symbol-page-main">
       <div className="symbol-header">
         <div>
           <h1 className="symbol-title mono">{symbol}</h1>
@@ -366,13 +383,15 @@ export function SymbolPage() {
         </div>
       )}
 
-      <MetricStrip
-        metrics={metrics.data?.metrics}
-        loading={metrics.isLoading}
-        benchmark={benchmark}
-      />
+      <section id="overview" className="symbol-section">
+        <MetricStrip
+          metrics={metrics.data?.metrics}
+          loading={metrics.isLoading}
+          benchmark={benchmark}
+        />
+      </section>
 
-      <div className="panel">
+      <section id="price" className="symbol-section panel">
         <div className="panel-head">
           <h3>Price</h3>
           <SectionRangeControls
@@ -397,66 +416,76 @@ export function SymbolPage() {
             compareLoading={compareLoading}
           />
         )}
-      </div>
+      </section>
 
-      <ValuationHistoryPanel
-        data={valuation.data}
-        loading={valuation.isLoading}
-        rangeControls={
-          <SectionRangeControls
-            label="Valuation"
-            selection={valuationRange.selection}
-            isOverridden={valuationRange.isOverridden}
-            onPreset={valuationRange.selectPreset}
-            onCustomMode={valuationRange.selectCustomMode}
-            onCustomChange={valuationRange.setCustom}
-            onFollowGlobal={valuationRange.followGlobal}
-          />
-        }
-      />
+      <section id="valuation" className="symbol-section">
+        <ValuationHistoryPanel
+          data={valuation.data}
+          loading={valuation.isLoading}
+          rangeControls={
+            <SectionRangeControls
+              label="Valuation"
+              selection={valuationRange.selection}
+              isOverridden={valuationRange.isOverridden}
+              onPreset={valuationRange.selectPreset}
+              onCustomMode={valuationRange.selectCustomMode}
+              onCustomChange={valuationRange.setCustom}
+              onFollowGlobal={valuationRange.followGlobal}
+            />
+          }
+        />
+      </section>
 
-      <ShortInterestPanel
-        data={shortInterest.data}
-        loading={shortInterest.isLoading}
-        rangeControls={
-          <SectionRangeControls
-            label="Short interest"
-            selection={shortInterestRange.selection}
-            isOverridden={shortInterestRange.isOverridden}
-            onPreset={shortInterestRange.selectPreset}
-            onCustomMode={shortInterestRange.selectCustomMode}
-            onCustomChange={shortInterestRange.setCustom}
-            onFollowGlobal={shortInterestRange.followGlobal}
-          />
-        }
-      />
+      <section id="short-interest" className="symbol-section">
+        <ShortInterestPanel
+          data={shortInterest.data}
+          loading={shortInterest.isLoading}
+          rangeControls={
+            <SectionRangeControls
+              label="Short interest"
+              selection={shortInterestRange.selection}
+              isOverridden={shortInterestRange.isOverridden}
+              onPreset={shortInterestRange.selectPreset}
+              onCustomMode={shortInterestRange.selectCustomMode}
+              onCustomChange={shortInterestRange.setCustom}
+              onFollowGlobal={shortInterestRange.followGlobal}
+            />
+          }
+        />
+      </section>
 
-      <PeerComparisonPanel
-        data={peers.data}
-        loading={peers.isLoading}
-        customPeers={customPeers}
-        onCustomPeersChange={setCustomPeers}
-      />
+      <section id="peers" className="symbol-section">
+        <PeerComparisonPanel
+          data={peers.data}
+          loading={peers.isLoading}
+          customPeers={customPeers}
+          onCustomPeersChange={setCustomPeers}
+        />
+      </section>
 
-      <OptionsSummaryPanel symbol={symbol} />
+      <section id="options" className="symbol-section">
+        <OptionsSummaryPanel symbol={symbol} />
+      </section>
 
-      <RollingRiskPanel
-        symbol={symbol}
-        bounds={rollingRange.bounds}
-        rangeControls={
-          <SectionRangeControls
-            label="Rolling risk"
-            selection={rollingRange.selection}
-            isOverridden={rollingRange.isOverridden}
-            onPreset={rollingRange.selectPreset}
-            onCustomMode={rollingRange.selectCustomMode}
-            onCustomChange={rollingRange.setCustom}
-            onFollowGlobal={rollingRange.followGlobal}
-          />
-        }
-      />
+      <section id="rolling-risk" className="symbol-section">
+        <RollingRiskPanel
+          symbol={symbol}
+          bounds={rollingRange.bounds}
+          rangeControls={
+            <SectionRangeControls
+              label="Rolling risk"
+              selection={rollingRange.selection}
+              isOverridden={rollingRange.isOverridden}
+              onPreset={rollingRange.selectPreset}
+              onCustomMode={rollingRange.selectCustomMode}
+              onCustomChange={rollingRange.setCustom}
+              onFollowGlobal={rollingRange.followGlobal}
+            />
+          }
+        />
+      </section>
 
-      <div className="two-col">
+      <section id="technicals" className="symbol-section">
         <TechnicalsPanel
           series={technicals.data?.series ?? []}
           latest={technicals.data?.latest}
@@ -473,20 +502,29 @@ export function SymbolPage() {
             />
           }
         />
-        <FundamentalsPanel
-          data={fundamentals.data}
-          loading={fundamentals.isLoading}
-        />
-        <TiingoNewsPanel
-          news={context.data?.news ?? []}
-          loading={context.isLoading}
-          configured={context.data?.configured}
-        />
+      </section>
+
+      <div className="two-col">
+        <section id="fundamentals" className="symbol-section">
+          <FundamentalsPanel
+            data={fundamentals.data}
+            loading={fundamentals.isLoading}
+          />
+        </section>
+        <section id="news" className="symbol-section">
+          <TiingoNewsPanel
+            news={context.data?.news ?? []}
+            loading={context.isLoading}
+            configured={context.data?.configured}
+          />
+        </section>
       </div>
 
       {metrics.data?.disclaimer && (
         <p className="disclaimer">{metrics.data.disclaimer}</p>
       )}
+        </div>
+      </div>
     </div>
   );
 }
