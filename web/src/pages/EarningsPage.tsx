@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { useEarningsCalendar, useEarningsPrimaryPreference } from "../api/hooks";
+import { useEarningsCalendar, useEarningsPrimaryPreference, useAppConfig } from "../api/hooks";
 import type { EarningsPrimary } from "../api/client";
 import { fmtCompact, fmtNum, fmtPct, fmtPrice, normalizeTicker } from "../lib/format";
 import { useSeo } from "../lib/seo";
@@ -49,6 +49,8 @@ export function EarningsPage() {
   );
   const [wantRefresh, setWantRefresh] = useState(false);
   const [earningsPrimary, setEarningsPrimary] = useEarningsPrimaryPreference();
+  const appConfig = useAppConfig();
+  const finnhubConfigured = appConfig.data?.finnhub_configured ?? false;
 
   const cal = useEarningsCalendar(
     {
@@ -105,6 +107,22 @@ export function EarningsPage() {
             >
               Yahoo
             </button>
+            <button
+              type="button"
+              className={`chart-toggle-btn${earningsPrimary === "finnhub" ? " active" : ""}`}
+              disabled={
+                cal.isFetching ||
+                (appConfig.isSuccess && !finnhubConfigured)
+              }
+              title={
+                appConfig.isSuccess && !finnhubConfigured
+                  ? "Set FINNHUB_API_KEY to enable"
+                  : "Finnhub earnings calendar"
+              }
+              onClick={() => onEarningsPrimaryChange("finnhub")}
+            >
+              Finnhub
+            </button>
           </div>
         </div>
       </div>
@@ -140,7 +158,12 @@ export function EarningsPage() {
       {!cal.isLoading && events.length === 0 && (
         <div className="empty-panel">
           No earnings events in range. Try Load to refresh from{" "}
-          {earningsPrimary === "fmp" ? "FMP" : "Yahoo"}.
+          {earningsPrimary === "fmp"
+            ? "FMP"
+            : earningsPrimary === "finnhub"
+              ? "Finnhub"
+              : "Yahoo"}
+          .
         </div>
       )}
 

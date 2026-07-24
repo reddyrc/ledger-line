@@ -21,7 +21,7 @@ DEFAULT_DESCRIPTION = (
 )
 
 # Client routes that should appear in the sitemap
-STATIC_ROUTES = ["/", "/strategies", "/earnings", "/screen", "/macro"]
+STATIC_ROUTES = ["/", "/strategies", "/earnings", "/mcap", "/screen", "/macro"]
 
 # Always list these liquid tickers even before the DB has cached data
 SEED_SYMBOLS = [
@@ -104,6 +104,11 @@ def meta_for_path(path: str) -> dict[str, str]:
             "Upcoming earnings with EPS and revenue estimates, revision "
             "trends, historical post-earnings moves, implied volatility, and "
             "expected move context.",
+        ),
+        "mcap": (
+            f"Market cap delta watchlist | {SITE_NAME}",
+            "Tally signed market-cap change for a watchlist over a selected "
+            "period — end minus start, with a cumulative total.",
         ),
         "screen": (
             f"Stock screener — value & momentum filters | {SITE_NAME}",

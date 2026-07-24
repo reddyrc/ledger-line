@@ -718,3 +718,35 @@ export type ScreenRefreshResponse = {
   limit: number | null;
   errors: Array<{ ticker: string; error: string }>;
 };
+
+export type McapDeltaRow = {
+  symbol: string;
+  start_date: string | null;
+  end_date: string | null;
+  start_mcap: number | null;
+  end_mcap: number | null;
+  delta_mcap: number | null;
+  delta_mcap_pct: number | null;
+  start_price: number | null;
+  end_price: number | null;
+  delta_price_pct: number | null;
+  shares_start: number | null;
+  shares_end: number | null;
+  error: string | null;
+};
+
+export type McapDeltaTotals = {
+  delta_mcap: number | null;
+  start_mcap: number | null;
+  end_mcap: number | null;
+  included: number;
+  failed: number;
+};
+
+export type McapDeltaResponse = {
+  start: string | null;
+  end: string | null;
+  rows: McapDeltaRow[];
+  totals: McapDeltaTotals;
+  disclaimer: string;
+};

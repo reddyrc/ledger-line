@@ -23,6 +23,7 @@ from finance_app.services import (
     earnings_calendar_payload,
     fundamentals_payload,
     macro_payload,
+    mcap_delta_payload,
     screen_payload,
     screen_refresh_payload,
     screen_sectors_payload,
@@ -42,10 +43,10 @@ def _parse_price_source(price_source: Optional[str]) -> Optional[str]:
     if price_source is None or str(price_source).strip() == "":
         return None
     raw = str(price_source).strip().lower()
-    if raw not in ("tiingo", "yfinance"):
+    if raw not in ("tiingo", "yfinance", "finnhub"):
         raise HTTPException(
             status_code=400,
-            detail="price_source must be 'tiingo' or 'yfinance'",
+            detail="price_source must be 'tiingo', 'yfinance', or 'finnhub'",
         )
     return normalize_price_primary(price_source)
 
@@ -54,14 +55,16 @@ def _parse_earnings_source(earnings_source: Optional[str]) -> Optional[str]:
     if earnings_source is None or str(earnings_source).strip() == "":
         return None
     raw = str(earnings_source).strip().lower()
-    if raw not in ("fmp", "yfinance"):
+    if raw not in ("fmp", "yfinance", "finnhub"):
         raise HTTPException(
             status_code=400,
-            detail="earnings_source must be 'fmp' or 'yfinance'",
+            detail="earnings_source must be 'fmp', 'yfinance', or 'finnhub'",
         )
     settings = get_settings()
     return normalize_earnings_primary(
-        raw, fmp_configured=settings.fmp_configured
+        raw,
+        fmp_configured=settings.fmp_configured,
+        finnhub_configured=settings.finnhub_configured,
     )
 
 
@@ -77,6 +80,8 @@ def get_app_config() -> dict:
     return {
         "price_primary": settings.price_primary_normalized,
         "tiingo_configured": tiingo_configured(),
+        "finnhub_configured": settings.finnhub_configured,
+        "finnhub_ohlcv": settings.finnhub_ohlcv_enabled,
         "earnings_primary": settings.earnings_primary_normalized,
         "fmp_configured": settings.fmp_configured,
     }
@@ -128,12 +133,18 @@ def get_metrics(
 @router.get("/symbols/{symbol}/context")
 def get_symbol_context(
     symbol: str,
-    refresh: bool = Query(False, description="Bypass Tiingo context cache"),
+    refresh: bool = Query(False, description="Bypass context cache"),
     news_limit: int = Query(8, ge=1, le=25),
+    price_source: Optional[str] = Query(
+        None, description="Override PRICE_PRIMARY: tiingo | yfinance | finnhub"
+    ),
 ) -> dict:
-    """Tiingo ticker meta + recent news (requires TIINGO_API_KEY)."""
+    """Ticker meta + recent news (Tiingo or Finnhub depending on preference/keys)."""
     return symbol_tiingo_context(
-        symbol, news_limit=news_limit, force_refresh=refresh
+        symbol,
+        news_limit=news_limit,
+        force_refresh=refresh,
+        price_primary=_parse_price_source(price_source),
     )
 
 
@@ -422,6 +433,30 @@ def get_earnings_calendar(
         symbols=tickers,
         refresh=refresh,
         earnings_primary=_parse_earnings_source(earnings_source),
+    )
+
+
+@router.get("/mcap-delta")
+def get_mcap_delta(
+    symbols: str = Query(..., description="Comma-separated tickers (max 15)"),
+    start: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    end: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    refresh: bool = Query(
+        False, description="Re-fetch prices and SEC EDGAR companyfacts"
+    ),
+    price_source: Optional[str] = Query(
+        None, description="Override PRICE_PRIMARY: tiingo | yfinance"
+    ),
+) -> dict:
+    tickers = [s.strip() for s in symbols.split(",") if s.strip()]
+    if not tickers:
+        raise HTTPException(status_code=400, detail="symbols is required")
+    return mcap_delta_payload(
+        symbols=tickers,
+        start=start,
+        end=end,
+        force_refresh=refresh,
+        price_primary=_parse_price_source(price_source),
     )
 
 

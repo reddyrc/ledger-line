@@ -4,18 +4,22 @@ type Props = {
   news: TiingoNewsItem[];
   loading?: boolean;
   configured?: boolean;
+  source?: string | null;
 };
 
-export function TiingoNewsPanel({ news, loading, configured }: Props) {
+export function TiingoNewsPanel({ news, loading, configured, source }: Props) {
   if (configured === false) {
     return null;
   }
+
+  const label =
+    source === "finnhub" ? "Finnhub" : source === "tiingo" ? "Tiingo" : "News";
 
   return (
     <div className="panel">
       <div className="panel-head">
         <h3>News</h3>
-        <span className="muted small">Tiingo</span>
+        <span className="muted small">{label}</span>
       </div>
       {loading && <div className="chart-skeleton skeleton-block" />}
       {!loading && news.length === 0 && (

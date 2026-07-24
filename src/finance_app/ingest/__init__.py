@@ -7,6 +7,7 @@ import pandas as pd
 
 from finance_app.config import get_settings, normalize_price_primary
 from finance_app.db import get_meta, get_meta_updated_at, load_ohlcv, upsert_ohlcv
+from finance_app.ingest.finnhub import fetch_ohlcv_finnhub, finnhub_configured
 from finance_app.ingest.prices_stooq import fetch_stooq_ohlcv
 from finance_app.ingest.prices_tiingo import fetch_tiingo_ohlcv, tiingo_configured
 from finance_app.ingest.prices_yfinance import fetch_yfinance_ohlcv
@@ -56,6 +57,13 @@ def _needs_primary_upgrade(
         if "source" not in cached.columns:
             return get_meta(f"ohlcv:{symbol}") != "yfinance"
         return _source_coverage_thin(cached, "yfinance")
+    if primary == "finnhub":
+        # Free Finnhub cannot serve candles unless FINNHUB_OHLCV is enabled.
+        if not get_settings().finnhub_ohlcv_enabled:
+            return False
+        if "source" not in cached.columns:
+            return get_meta(f"ohlcv:{symbol}") != "finnhub"
+        return _source_coverage_thin(cached, "finnhub")
     return False
 
 
@@ -111,12 +119,27 @@ def _fetch_with_fallback(
 ) -> tuple[pd.DataFrame, str]:
     """
     Fetch OHLCV preferring PRICE_PRIMARY (or override).
+    finnhub: Finnhub → Tiingo → Stooq → yfinance  (Finnhub only when primary)
     tiingo: Tiingo → Stooq → yfinance
     yfinance: yfinance → Stooq → Tiingo
     """
     primary = normalize_price_primary(
         primary, default=get_settings().price_primary_normalized
     )
+
+    def try_finnhub() -> Optional[tuple[pd.DataFrame, str]]:
+        # Skip candle calls on free Finnhub (HTTP 403) unless opted in.
+        if not get_settings().finnhub_ohlcv_enabled:
+            return None
+        if not finnhub_configured():
+            return None
+        try:
+            df = fetch_ohlcv_finnhub(symbol, start=start, end=end)
+            if not df.empty:
+                return df, "finnhub"
+        except Exception:
+            pass
+        return None
 
     def try_tiingo() -> Optional[tuple[pd.DataFrame, str]]:
         if not tiingo_configured():
@@ -147,7 +170,9 @@ def _fetch_with_fallback(
             pass
         return None
 
-    if primary == "yfinance":
+    if primary == "finnhub":
+        order = (try_finnhub, try_tiingo, try_stooq, try_yfinance)
+    elif primary == "yfinance":
         order = (try_yfinance, try_stooq, try_tiingo)
     else:
         order = (try_tiingo, try_stooq, try_yfinance)

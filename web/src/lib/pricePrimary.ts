@@ -3,7 +3,7 @@ import type { PricePrimary } from "../api/client";
 const STORAGE_KEY = "ledgerline.pricePrimary";
 
 export function isPricePrimary(value: unknown): value is PricePrimary {
-  return value === "tiingo" || value === "yfinance";
+  return value === "tiingo" || value === "yfinance" || value === "finnhub";
 }
 
 export function readStoredPricePrimary(): PricePrimary | null {

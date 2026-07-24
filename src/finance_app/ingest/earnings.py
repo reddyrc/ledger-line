@@ -1,4 +1,4 @@
-"""Resolve earnings events from FMP and/or yfinance based on EARNINGS_PRIMARY."""
+"""Resolve earnings events from FMP, Finnhub, and/or yfinance based on EARNINGS_PRIMARY."""
 
 from __future__ import annotations
 
@@ -8,6 +8,10 @@ import pandas as pd
 
 from finance_app.config import get_settings, normalize_earnings_primary
 from finance_app.ingest.earnings_fmp import fetch_fmp_earnings_events, fmp_configured
+from finance_app.ingest.finnhub import (
+    fetch_earnings_events_finnhub,
+    finnhub_configured,
+)
 from finance_app.ingest.prices_yfinance import fetch_yfinance_earnings_events
 
 EMPTY = pd.DataFrame(
@@ -20,7 +24,17 @@ def effective_earnings_primary(override: Optional[str] = None) -> str:
     return normalize_earnings_primary(
         override if override is not None else settings.earnings_primary,
         fmp_configured=settings.fmp_configured,
+        finnhub_configured=settings.finnhub_configured,
     )
+
+
+def _earnings_order(primary: str) -> tuple[str, ...]:
+    """Primary first; Finnhub only when selected (protect free-tier quota)."""
+    if primary == "finnhub":
+        return ("finnhub", "fmp", "yfinance")
+    if primary == "yfinance":
+        return ("yfinance", "fmp")
+    return ("fmp", "yfinance")
 
 
 def fetch_earnings_events_with_fallback(
@@ -31,19 +45,20 @@ def fetch_earnings_events_with_fallback(
 ) -> tuple[pd.DataFrame, str]:
     """
     Prefer EARNINGS_PRIMARY (or override), then cross-fallback.
-    Returns (dataframe, source) where source is fmp | yfinance | none.
+    Returns (dataframe, source) where source is fmp | yfinance | finnhub | none.
     """
     primary = effective_earnings_primary(earnings_primary)
-    order = (
-        ("fmp", "yfinance") if primary == "fmp" else ("yfinance", "fmp")
-    )
 
-    for source in order:
+    for source in _earnings_order(primary):
         try:
             if source == "fmp":
                 if not fmp_configured():
                     continue
                 df = fetch_fmp_earnings_events(symbol, limit=limit)
+            elif source == "finnhub":
+                if not finnhub_configured():
+                    continue
+                df = fetch_earnings_events_finnhub(symbol, limit=limit)
             else:
                 df = fetch_yfinance_earnings_events(symbol, limit=limit)
         except Exception:

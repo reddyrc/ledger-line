@@ -5,6 +5,7 @@ import { Layout } from "./components/Layout";
 import { EarningsPage } from "./pages/EarningsPage";
 import { HomePage } from "./pages/HomePage";
 import { MacroPage } from "./pages/MacroPage";
+import { McapDeltaPage } from "./pages/McapDeltaPage";
 import { OptionsPage } from "./pages/OptionsPage";
 import { ScreenerPage } from "./pages/ScreenerPage";
 import { StrategiesPage } from "./pages/StrategiesPage";
@@ -38,6 +39,7 @@ export default function App() {
               />
               <Route path="strategies" element={<StrategiesPage />} />
               <Route path="earnings" element={<EarningsPage />} />
+              <Route path="mcap" element={<McapDeltaPage />} />
               <Route path="screen" element={<ScreenerPage />} />
               <Route path="macro" element={<MacroPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />

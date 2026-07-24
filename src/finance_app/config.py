@@ -4,12 +4,12 @@ from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-PRICE_PRIMARY_CHOICES = frozenset({"tiingo", "yfinance"})
-EARNINGS_PRIMARY_CHOICES = frozenset({"fmp", "yfinance"})
+PRICE_PRIMARY_CHOICES = frozenset({"tiingo", "yfinance", "finnhub"})
+EARNINGS_PRIMARY_CHOICES = frozenset({"fmp", "yfinance", "finnhub"})
 
 
 def normalize_price_primary(value: Optional[str], default: str = "tiingo") -> str:
-    """Return tiingo | yfinance; invalid/empty → default (tiingo)."""
+    """Return tiingo | yfinance | finnhub; invalid/empty → default (tiingo)."""
     v = (value or default or "tiingo").strip().lower()
     return v if v in PRICE_PRIMARY_CHOICES else "tiingo"
 
@@ -17,18 +17,26 @@ def normalize_price_primary(value: Optional[str], default: str = "tiingo") -> st
 def normalize_earnings_primary(
     value: Optional[str],
     *,
-    default: str = "fmp",
+    default: str = "finnhub",
     fmp_configured: bool = False,
+    finnhub_configured: bool = False,
 ) -> str:
     """
-    Return fmp | yfinance.
-    If preferred is fmp but no key, fall back to yfinance.
+    Return fmp | yfinance | finnhub.
+    If preferred needs a key that is missing, fall back to another available source.
     """
-    v = (value or default or "fmp").strip().lower()
+    v = (value or default or "finnhub").strip().lower()
     if v not in EARNINGS_PRIMARY_CHOICES:
-        v = "fmp" if fmp_configured else "yfinance"
+        if finnhub_configured:
+            v = "finnhub"
+        elif fmp_configured:
+            v = "fmp"
+        else:
+            v = "yfinance"
+    if v == "finnhub" and not finnhub_configured:
+        return "fmp" if fmp_configured else "yfinance"
     if v == "fmp" and not fmp_configured:
-        return "yfinance"
+        return "finnhub" if finnhub_configured else "yfinance"
     return v
 
 
@@ -42,12 +50,17 @@ class Settings(BaseSettings):
     fred_api_key: str = ""
     # Tiingo EOD prices / meta / news (https://api.tiingo.com) — set TIINGO_API_KEY
     tiingo_api_key: str = ""
-    # Deploy-time OHLCV preference: tiingo | yfinance (env: PRICE_PRIMARY)
+    # Deploy-time OHLCV preference: tiingo | yfinance | finnhub (env: PRICE_PRIMARY)
+    # Free Finnhub has no candles — default to tiingo for price history.
     price_primary: str = "tiingo"
     # Financial Modeling Prep — earnings calendar / EPS (env: FMP_API_KEY)
     fmp_api_key: str = ""
-    # Deploy-time earnings preference: fmp | yfinance (env: EARNINGS_PRIMARY)
-    earnings_primary: str = "fmp"
+    # Finnhub — prices / earnings / news (env: FINNHUB_API_KEY)
+    finnhub_api_key: str = ""
+    # Paid Finnhub market-data plans only (env: FINNHUB_OHLCV)
+    finnhub_ohlcv: bool = False
+    # Deploy-time earnings preference: fmp | yfinance | finnhub (env: EARNINGS_PRIMARY)
+    earnings_primary: str = "finnhub"
     # SEC requires a descriptive User-Agent with a contact email.
     sec_user_agent: str = "Ledgerline/0.1 (contact@example.com)"
     database_path: str = "./data/finance.db"
@@ -82,10 +95,20 @@ class Settings(BaseSettings):
         return bool((self.fmp_api_key or "").strip())
 
     @property
+    def finnhub_configured(self) -> bool:
+        return bool((self.finnhub_api_key or "").strip())
+
+    @property
+    def finnhub_ohlcv_enabled(self) -> bool:
+        """True when operator opts into Finnhub candles (paid market-data plan)."""
+        return self.finnhub_configured and bool(self.finnhub_ohlcv)
+
+    @property
     def earnings_primary_normalized(self) -> str:
         return normalize_earnings_primary(
             self.earnings_primary,
             fmp_configured=self.fmp_configured,
+            finnhub_configured=self.finnhub_configured,
         )
 
 

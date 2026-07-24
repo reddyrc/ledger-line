@@ -3,7 +3,7 @@ import type { EarningsPrimary } from "../api/client";
 const STORAGE_KEY = "ledgerline.earningsPrimary";
 
 export function isEarningsPrimary(value: unknown): value is EarningsPrimary {
-  return value === "fmp" || value === "yfinance";
+  return value === "fmp" || value === "yfinance" || value === "finnhub";
 }
 
 export function readStoredEarningsPrimary(): EarningsPrimary | null {

@@ -5,6 +5,7 @@ import type {
   IvHistoryResponse,
   MacroListResponse,
   MacroSeriesResponse,
+  McapDeltaResponse,
   MetricsResponse,
   OptionsContractResponse,
   OptionsResponse,
@@ -59,12 +60,15 @@ function qs(params: Record<string, string | boolean | undefined | null>): string
   return s ? `?${s}` : "";
 }
 
-export type PricePrimary = "tiingo" | "yfinance";
-export type EarningsPrimary = "fmp" | "yfinance";
+export type PricePrimary = "tiingo" | "yfinance" | "finnhub";
+export type EarningsPrimary = "fmp" | "yfinance" | "finnhub";
 
 export type AppConfigResponse = {
   price_primary: PricePrimary;
   tiingo_configured: boolean;
+  finnhub_configured: boolean;
+  /** False on free Finnhub — /stock/candle is paid-only. */
+  finnhub_ohlcv: boolean;
   earnings_primary: EarningsPrimary;
   fmp_configured: boolean;
 };
@@ -108,7 +112,11 @@ export function fetchMetrics(
 
 export function fetchSymbolContext(
   symbol: string,
-  opts: { refresh?: boolean; news_limit?: number } = {},
+  opts: {
+    refresh?: boolean;
+    news_limit?: number;
+    price_source?: PricePrimary;
+  } = {},
   signal?: AbortSignal,
 ) {
   return getJson<SymbolContextResponse>(
@@ -116,6 +124,7 @@ export function fetchSymbolContext(
       refresh: opts.refresh,
       news_limit:
         opts.news_limit != null ? String(opts.news_limit) : undefined,
+      price_source: opts.price_source,
     })}`,
     signal,
   );
@@ -379,6 +388,28 @@ export function fetchEarningsCalendar(
       symbols: opts.symbols?.length ? opts.symbols.join(",") : undefined,
       refresh: opts.refresh ? true : undefined,
       earnings_source: opts.earnings_source,
+    })}`,
+    signal,
+  );
+}
+
+export function fetchMcapDelta(
+  opts: {
+    symbols: string[];
+    start?: string;
+    end?: string;
+    refresh?: boolean;
+    price_source?: PricePrimary;
+  },
+  signal?: AbortSignal,
+) {
+  return getJson<McapDeltaResponse>(
+    `/mcap-delta${qs({
+      symbols: opts.symbols.join(","),
+      start: opts.start,
+      end: opts.end,
+      refresh: opts.refresh ? true : undefined,
+      price_source: opts.price_source,
     })}`,
     signal,
   );

@@ -17,6 +17,7 @@ import {
   fetchOptionsIvHistory,
   fetchStrategiesScan,
   fetchEarningsCalendar,
+  fetchMcapDelta,
   fetchPeers,
   fetchRolling,
   fetchScreen,
@@ -143,7 +144,7 @@ export function usePricePrimaryPreference(): [
   useEffect(() => {
     if (readStoredPricePrimary()) return;
     const deploy = config.data?.price_primary;
-    if (deploy === "tiingo" || deploy === "yfinance") {
+    if (deploy === "tiingo" || deploy === "yfinance" || deploy === "finnhub") {
       setPrimaryState(deploy);
     }
   }, [config.data?.price_primary]);
@@ -165,13 +166,13 @@ export function useEarningsPrimaryPreference(): [
 ] {
   const config = useAppConfig();
   const [primary, setPrimaryState] = useState<EarningsPrimary>(
-    () => readStoredEarningsPrimary() ?? "fmp",
+    () => readStoredEarningsPrimary() ?? "finnhub",
   );
 
   useEffect(() => {
     if (readStoredEarningsPrimary()) return;
     const deploy = config.data?.earnings_primary;
-    if (deploy === "fmp" || deploy === "yfinance") {
+    if (deploy === "fmp" || deploy === "yfinance" || deploy === "finnhub") {
       setPrimaryState(deploy);
     }
   }, [config.data?.earnings_primary]);
@@ -272,10 +273,14 @@ export function useMetrics(
   });
 }
 
-export function useSymbolContext(symbol: string) {
+export function useSymbolContext(
+  symbol: string,
+  priceSource: PricePrimary = "tiingo",
+) {
   return useQuery({
-    queryKey: ["symbol-context", symbol],
-    queryFn: ({ signal }) => fetchSymbolContext(symbol, {}, signal),
+    queryKey: ["symbol-context", symbol, priceSource],
+    queryFn: ({ signal }) =>
+      fetchSymbolContext(symbol, { price_source: priceSource }, signal),
     enabled: Boolean(symbol),
     staleTime: 30 * 60_000,
   });
@@ -319,7 +324,7 @@ export function useFundamentals(symbol: string) {
 export function useValuationHistory(
   symbol: string,
   bounds: DateBounds,
-  earningsSource: EarningsPrimary = "fmp",
+  earningsSource: EarningsPrimary = "finnhub",
 ) {
   return useQuery({
     queryKey: [
@@ -527,6 +532,28 @@ export function useEarningsCalendar(
     ],
     queryFn: ({ signal }) => fetchEarningsCalendar(opts, signal),
     enabled,
+  });
+}
+
+export function useMcapDelta(
+  opts: {
+    symbols: string[];
+    start?: string;
+    end?: string;
+    refresh?: boolean;
+  },
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: [
+      "mcap-delta",
+      opts.symbols,
+      opts.start ?? null,
+      opts.end ?? null,
+      opts.refresh ?? false,
+    ],
+    queryFn: ({ signal }) => fetchMcapDelta(opts, signal),
+    enabled: enabled && opts.symbols.length > 0,
   });
 }
 

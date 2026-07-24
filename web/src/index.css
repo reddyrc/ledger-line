@@ -1174,6 +1174,36 @@ input {
   color: var(--danger);
 }
 
+.data-table .pos,
+.mcap-delta-total.pos {
+  color: var(--accent);
+}
+
+.data-table .neg,
+.mcap-delta-total.neg {
+  color: var(--danger);
+}
+
+.mcap-delta-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  align-items: end;
+}
+
+.mcap-delta-total {
+  font-size: clamp(1.35rem, 3vw, 1.85rem);
+  font-weight: 600;
+  margin: 0.15rem 0 0;
+}
+
+@media (max-width: 640px) {
+  .mcap-delta-summary-grid {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+}
+
 .sort-btn {
   background: transparent;
   border: 0;

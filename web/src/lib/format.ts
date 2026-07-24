@@ -24,6 +24,15 @@ export function fmtCompact(n: number | null | undefined): string {
   }).format(n);
 }
 
+/** Compact currency with explicit sign for deltas (e.g. −$45.3B). */
+export function fmtSignedCompact(n: number | null | undefined): string {
+  if (n == null || Number.isNaN(n)) return "—";
+  const abs = fmtCompact(Math.abs(n));
+  if (n > 0) return `+$${abs}`;
+  if (n < 0) return `−$${abs}`;
+  return `$${abs}`;
+}
+
 export function normalizeTicker(raw: string): string {
   return raw.trim().toUpperCase().replace(/[^A-Z0-9.-]/g, "");
 }

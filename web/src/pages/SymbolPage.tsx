@@ -25,6 +25,7 @@ import {
   usePeers,
   usePricePrimaryPreference,
   useEarningsPrimaryPreference,
+  useAppConfig,
   useShortInterest,
   useSymbolContext,
   useTechnicals,
@@ -111,6 +112,9 @@ export function SymbolPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [pricePrimary, setPricePrimary] = usePricePrimaryPreference();
   const [earningsPrimary, setEarningsPrimary] = useEarningsPrimaryPreference();
+  const appConfig = useAppConfig();
+  const finnhubConfigured = appConfig.data?.finnhub_configured ?? false;
+  const finnhubOhlcv = appConfig.data?.finnhub_ohlcv ?? false;
   const qc = useQueryClient();
 
   // Reset compare list when navigating to a different primary symbol
@@ -155,7 +159,7 @@ export function SymbolPage() {
   }
 
   const metrics = useMetrics(symbol, bounds, benchmark, pricePrimary);
-  const context = useSymbolContext(symbol);
+  const context = useSymbolContext(symbol, pricePrimary);
   const technicals = useTechnicals(
     symbol,
     technicalsRange.bounds,
@@ -314,6 +318,24 @@ export function SymbolPage() {
             >
               Yahoo
             </button>
+            <button
+              type="button"
+              className={`chart-toggle-btn${pricePrimary === "finnhub" ? " active" : ""}`}
+              disabled={
+                refreshing ||
+                (appConfig.isSuccess && !finnhubConfigured)
+              }
+              title={
+                appConfig.isSuccess && !finnhubConfigured
+                  ? "Set FINNHUB_API_KEY to enable"
+                  : finnhubOhlcv
+                    ? "Finnhub daily candles"
+                    : "Finnhub preferred — free tier has no candles, so history falls back to Tiingo/Yahoo"
+              }
+              onClick={() => void onPricePrimaryChange("finnhub")}
+            >
+              Finnhub
+            </button>
           </div>
           <div
             className="price-primary-toggle"
@@ -336,6 +358,22 @@ export function SymbolPage() {
               onClick={() => void onEarningsPrimaryChange("yfinance")}
             >
               Yahoo
+            </button>
+            <button
+              type="button"
+              className={`chart-toggle-btn${earningsPrimary === "finnhub" ? " active" : ""}`}
+              disabled={
+                refreshing ||
+                (appConfig.isSuccess && !finnhubConfigured)
+              }
+              title={
+                appConfig.isSuccess && !finnhubConfigured
+                  ? "Set FINNHUB_API_KEY to enable"
+                  : "Finnhub earnings history"
+              }
+              onClick={() => void onEarningsPrimaryChange("finnhub")}
+            >
+              Finnhub
             </button>
           </div>
         </div>
@@ -516,6 +554,7 @@ export function SymbolPage() {
             news={context.data?.news ?? []}
             loading={context.isLoading}
             configured={context.data?.configured}
+            source={context.data?.source}
           />
         </section>
       </div>

@@ -5,6 +5,11 @@ from typing import Any, Optional
 from finance_app.config import get_settings
 from finance_app.db import load_short_interest, load_tiingo_context, upsert_tiingo_context
 from finance_app.ingest import get_or_fetch_ohlcv
+from finance_app.ingest.finnhub import (
+    fetch_company_news_finnhub,
+    fetch_profile_finnhub,
+    finnhub_configured,
+)
 from finance_app.ingest.fred import DEFAULT_SERIES, get_or_fetch_macro, ingest_default_macro
 from finance_app.ingest.prices_tiingo import (
     fetch_tiingo_meta,
@@ -74,8 +79,8 @@ def symbol_metrics(
         "symbol": symbol,
         "metrics": metrics,
         "disclaimer": (
-            "Price data uses PRICE_PRIMARY (tiingo|yfinance), then Stooq fallback. "
-            "Not for live trading decisions."
+            "Price data uses PRICE_PRIMARY (tiingo|yfinance|finnhub), then Stooq "
+            "fallback. Not for live trading decisions."
         ),
     }
 
@@ -85,12 +90,22 @@ def symbol_tiingo_context(
     *,
     news_limit: int = 8,
     force_refresh: bool = False,
+    price_primary: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Cached Tiingo meta + news for a symbol (empty when key unset)."""
+    """
+    Cached meta + news for a symbol.
+    Prefers Finnhub profile/news whenever FINNHUB_API_KEY is set (works on free tier).
+    Falls back to Tiingo when Finnhub is unset.
+    """
     from datetime import datetime, timedelta, timezone
 
     symbol = symbol.upper()
-    if not tiingo_configured():
+    # Free Finnhub: use for profile/news whenever keyed. Price candles stay Tiingo/Yahoo.
+    prefer_finnhub = finnhub_configured()
+    use_tiingo = tiingo_configured() and not prefer_finnhub
+    use_finnhub = prefer_finnhub
+
+    if not use_tiingo and not use_finnhub:
         return {
             "symbol": symbol,
             "configured": False,
@@ -99,6 +114,9 @@ def symbol_tiingo_context(
             "source": None,
         }
 
+    source = "finnhub" if prefer_finnhub else "tiingo"
+    cache_key_source = source
+
     if not force_refresh:
         cached = load_tiingo_context(symbol)
         if cached and cached.get("fetched_at"):
@@ -106,24 +124,42 @@ def symbol_tiingo_context(
                 fetched = datetime.fromisoformat(str(cached["fetched_at"]))
                 if fetched.tzinfo is None:
                     fetched = fetched.replace(tzinfo=timezone.utc)
-                if datetime.now(timezone.utc) - fetched < timedelta(
-                    hours=TIINGO_CONTEXT_TTL_HOURS
+                payload = cached.get("payload") or {}
+                cached_source = payload.get("provider") or cached.get("source") or "tiingo"
+                if (
+                    cached_source == cache_key_source
+                    and datetime.now(timezone.utc) - fetched
+                    < timedelta(hours=TIINGO_CONTEXT_TTL_HOURS)
                 ):
-                    payload = cached.get("payload") or {}
                     return {
                         "symbol": symbol,
                         "configured": True,
                         "meta": payload.get("meta"),
                         "news": payload.get("news") or [],
-                        "source": "tiingo",
+                        "source": cached_source,
                         "freshness": "cached",
                     }
             except (TypeError, ValueError):
                 pass
 
-    meta = fetch_tiingo_meta(symbol)
-    news = fetch_tiingo_news(symbol, limit=news_limit)
-    payload = {"meta": meta, "news": news}
+    meta = None
+    news: list[Any] = []
+    if source == "finnhub":
+        meta = fetch_profile_finnhub(symbol)
+        news = fetch_company_news_finnhub(symbol, limit=news_limit)
+    else:
+        meta = fetch_tiingo_meta(symbol)
+        news = fetch_tiingo_news(symbol, limit=news_limit)
+        # Fill gaps from Finnhub when keyed
+        if finnhub_configured() and (meta is None or not news):
+            if meta is None:
+                meta = fetch_profile_finnhub(symbol)
+            if not news:
+                news = fetch_company_news_finnhub(symbol, limit=news_limit)
+                if news:
+                    source = "finnhub"
+
+    payload = {"meta": meta, "news": news, "provider": source}
     try:
         upsert_tiingo_context(symbol, payload)
     except Exception:
@@ -133,7 +169,7 @@ def symbol_tiingo_context(
         "configured": True,
         "meta": meta,
         "news": news,
-        "source": "tiingo",
+        "source": source,
         "freshness": "live",
     }
 
@@ -590,6 +626,34 @@ def screen_refresh_payload(
         offset=offset,
         sleep_s=sleep_s,
         skip_fundamentals=skip_fundamentals,
+    )
+
+
+def mcap_delta_payload(
+    *,
+    symbols: list[str],
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    force_refresh: bool = False,
+    price_primary: Optional[str] = None,
+) -> dict[str, Any]:
+    """Ensure prices are cached, then compute signed Δ market cap per ticker."""
+    from finance_app.metrics.mcap_delta import MAX_SYMBOLS, compute_mcap_delta_batch
+
+    tickers = [s.upper().strip() for s in symbols if s and str(s).strip()][:MAX_SYMBOLS]
+    for sym in tickers:
+        try:
+            get_or_fetch_ohlcv(
+                sym,
+                start=start,
+                end=end,
+                force_refresh=force_refresh,
+                price_primary=price_primary,
+            )
+        except Exception:
+            continue
+    return compute_mcap_delta_batch(
+        tickers, start=start, end=end, refresh=force_refresh
     )
 
 
