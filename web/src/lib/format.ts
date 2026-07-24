@@ -33,6 +33,15 @@ export function fmtSignedCompact(n: number | null | undefined): string {
   return `$${abs}`;
 }
 
+/** Signed ratio / number delta (e.g. +2.35, −0.40). */
+export function fmtSignedNum(n: number | null | undefined, digits = 2): string {
+  if (n == null || Number.isNaN(n)) return "—";
+  const abs = Math.abs(n).toFixed(digits);
+  if (n > 0) return `+${abs}`;
+  if (n < 0) return `−${abs}`;
+  return abs;
+}
+
 export function normalizeTicker(raw: string): string {
   return raw.trim().toUpperCase().replace(/[^A-Z0-9.-]/g, "");
 }

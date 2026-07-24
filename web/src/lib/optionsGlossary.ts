@@ -75,4 +75,8 @@ export const OPTION_TIPS = {
   capitalUsed: "Capital at risk for the sized position (max loss × contracts).",
   netPremium: "Cash received (credit) or paid (debit) to open the sized position.",
   gainRisk: "Max gain divided by max loss for the sized position.",
+  collar:
+    "Buy 100 shares, buy a put for downside, sell a call for upside. Net options cost uses call bid − put ask; leave the loss budget blank to prefer near-zero cost.",
+  collarMaxLoss:
+    "Worst-case loss for one collar (100 shares) if the stock falls to the put strike: roughly (cost basis − put strike) × 100. Enter a $ budget to include debit collars with tighter puts.",
 } as const;

@@ -17,10 +17,12 @@ from finance_app.metrics.option_pricing import black_scholes, leg_bs, years_to_e
 from finance_app.metrics.options import next_earnings_info, options_payload
 
 STRATEGY_TTL = timedelta(minutes=5)
+# Near-free collar: call bid may fall short of put ask by up to this amount (per share).
+FREE_COLLAR_MAX_DEBIT = 0.05
 DISCLAIMER = (
     "Heuristic screen from delayed Yahoo option mids. Scores are not probabilities of "
     "profit, ignore fills/fees/assignment, and are not trade advice. Mispricing flags "
-    "are quote anomalies—not executable arbitrage."
+    "are quote anomalies—not executable arbitrage. Collars use call bid − put ask for net options cost."
 )
 DEFAULT_SCAN_SYMBOLS = [
     "SPY",
@@ -98,6 +100,24 @@ def idea_id(symbol: str, expiration: str, kind: str, legs: list[dict]) -> str:
     return hashlib.sha1("|".join(parts).encode()).hexdigest()[:16]
 
 
+def _stock_leg(spot: float) -> dict[str, Any]:
+    """Synthetic long-stock leg for collar payoff / display (100 shares implied)."""
+    s = float(spot)
+    return {
+        "action": "buy",
+        "right": "stock",
+        "strike": None,
+        "mid": s,
+        "bid": s,
+        "ask": s,
+        "last": s,
+        "implied_volatility": None,
+        "contract_symbol": None,
+        "open_interest": None,
+        "volume": None,
+    }
+
+
 def _by_strike(rows: list[dict]) -> dict[float, dict]:
     out: dict[float, dict] = {}
     for r in rows:
@@ -133,6 +153,8 @@ def idea_liquidity(legs: list[dict], chain_rows: Optional[dict] = None) -> dict[
     vols: list[float] = []
     spreads: list[float] = []
     for lg in legs:
+        if lg.get("right") == "stock":
+            continue
         oi = _num(lg.get("open_interest"))
         vol = _num(lg.get("volume"))
         bid, ask = _num(lg.get("bid")), _num(lg.get("ask"))
@@ -213,6 +235,23 @@ def net_greeks_for_idea(
     leg_greeks: list[dict[str, Any]] = []
     totals = {"delta": 0.0, "gamma": 0.0, "theta": 0.0, "vega": 0.0, "rho": 0.0}
     for lg in legs:
+        if lg.get("right") == "stock":
+            sign = 1.0 if lg.get("action") == "buy" else -1.0
+            g = {
+                "contract_symbol": lg.get("contract_symbol"),
+                "action": lg.get("action"),
+                "right": "stock",
+                "strike": lg.get("strike"),
+                "delta": sign,
+                "gamma": 0.0,
+                "theta": 0.0,
+                "vega": 0.0,
+                "rho": 0.0,
+                "model_price": _num(lg.get("mid")),
+            }
+            leg_greeks.append(g)
+            totals["delta"] += sign
+            continue
         iv = _num(lg.get("implied_volatility"))
         if iv is None or iv <= 0:
             # try price from mid as IV-less skip
@@ -285,6 +324,15 @@ def scenario_grid(
             ok = True
             for lg in legs:
                 mid = _num(lg.get("mid")) or 0.0
+                if lg.get("right") == "stock":
+                    shocked = spot * (1.0 + sp)
+                    if lg.get("action") == "buy":
+                        value += shocked
+                        entry_value += mid
+                    else:
+                        value -= shocked
+                        entry_value -= mid
+                    continue
                 iv = _num(lg.get("implied_volatility"))
                 strike = _num(lg.get("strike"))
                 if iv is None or strike is None:
@@ -359,10 +407,14 @@ def payoff_at_expiration(legs: list[dict], spot: float) -> float:
     """Per-share PnL at expiration (not ×100)."""
     total = 0.0
     for lg in legs:
-        k = _num(lg.get("strike"))
         mid = _num(lg.get("mid")) or 0.0
         right = lg.get("right")
         action = lg.get("action")
+        if right == "stock":
+            entry = mid
+            total += (spot - entry) if action == "buy" else (entry - spot)
+            continue
+        k = _num(lg.get("strike"))
         if k is None:
             continue
         if right == "call":
@@ -377,10 +429,19 @@ def payoff_at_expiration(legs: list[dict], spot: float) -> float:
 def payoff_curve(legs: list[dict], spot: Optional[float], points: int = 41) -> list[dict]:
     strikes = [_num(lg.get("strike")) for lg in legs]
     strikes = [s for s in strikes if s is not None]
-    if not strikes:
+    stock_entries = [
+        _num(lg.get("mid"))
+        for lg in legs
+        if lg.get("right") == "stock" and _num(lg.get("mid")) is not None
+    ]
+    if not strikes and not stock_entries:
         return []
-    lo = min(strikes) * 0.9
-    hi = max(strikes) * 1.1
+    if strikes:
+        lo = min(strikes) * 0.9
+        hi = max(strikes) * 1.1
+    else:
+        lo = min(stock_entries) * 0.85  # type: ignore[type-var]
+        hi = max(stock_entries) * 1.15  # type: ignore[type-var]
     if spot is not None:
         lo = min(lo, spot * 0.85)
         hi = max(hi, spot * 1.15)
@@ -774,6 +835,151 @@ def _mispricing_flags(
     return ideas
 
 
+def _buy_fill(row: Optional[dict]) -> Optional[float]:
+    """Conservative buy price: ask, else mid, else last."""
+    if not row:
+        return None
+    return _num(row.get("ask")) or _mid(row) or _num(row.get("last"))
+
+
+def _sell_fill(row: Optional[dict]) -> Optional[float]:
+    """Conservative sell price: bid, else mid, else last."""
+    if not row:
+        return None
+    bid = _num(row.get("bid"))
+    if bid is not None and bid >= 0:
+        return bid
+    return _mid(row) or _num(row.get("last"))
+
+
+def _collars(
+    symbol: str,
+    expiration: str,
+    calls: dict[float, dict],
+    puts: dict[float, dict],
+    spot: float,
+    em: Optional[float],
+    max_pain: Optional[float],
+) -> list[dict[str, Any]]:
+    """
+    Long stock + long OTM put + short OTM call.
+
+    Includes zero/near-zero net pairs (call fill − put fill ≥ −FREE_COLLAR_MAX_DEBIT)
+    and debit collars in a wider strike window so a max-loss budget filter can
+    surface tighter puts.
+    """
+    ideas: list[dict[str, Any]] = []
+    move = em if em and em > 0 else spot * 0.05
+    # Don't let tiny near-term expected-move windows exclude almost all strikes.
+    band = max(2.0 * move, 0.10 * spot, spot * 0.02)
+    put_floor = spot - band
+    call_ceil = spot + band
+
+    put_strikes = sorted(
+        k for k in puts if put_floor <= k < spot and _buy_fill(puts[k]) is not None
+    )
+    call_strikes = sorted(
+        k for k in calls if spot < k <= call_ceil and _sell_fill(calls[k]) is not None
+    )
+    # Keep a manageable grid (prefer strikes nearer the money)
+    put_cands = put_strikes[-12:]
+    call_cands = call_strikes[:12]
+    if not put_cands or not call_cands:
+        return ideas
+
+    for kp in put_cands:
+        put_row = puts[kp]
+        put_ask = _buy_fill(put_row)
+        if put_ask is None or put_ask <= 0:
+            continue
+        for kc in call_cands:
+            call_row = calls[kc]
+            call_bid = _sell_fill(call_row)
+            if call_bid is None or call_bid < 0:
+                continue
+            net = call_bid - put_ask
+            is_free = net >= -FREE_COLLAR_MAX_DEBIT
+
+            basis = spot - net  # S + put_ask − call_bid
+            max_loss = basis - kp
+            max_profit = kc - basis
+            if max_loss < 0:
+                max_loss = 0.0
+            if max_profit < 0:
+                continue
+            # Skip absurd debit collars (options cost more than upside room)
+            if not is_free and net < -max_profit:
+                continue
+
+            upside = (kc - spot) / spot
+            down_buf = (spot - kp) / spot
+            free_bonus = 8.0 if net >= 0 else (4.0 if is_free else 0.0)
+            debit_penalty = 0.0 if is_free else min(abs(net), 3.0) * 8.0
+            score = _clamp(
+                35.0
+                + min(upside, 0.12) / 0.12 * 25.0
+                + min(down_buf, 0.12) / 0.12 * 20.0
+                + min(max(net, 0.0), 1.0) * 15.0
+                + free_bonus
+                - debit_penalty
+            )
+
+            put_leg = _leg(put_row, "put", "buy")
+            put_leg["mid"] = put_ask  # fill for payoff accounting
+            call_leg = _leg(call_row, "call", "sell")
+            call_leg["mid"] = call_bid
+            legs = [_stock_leg(spot), put_leg, call_leg]
+
+            notes = [
+                f"Buy 100 shares @ {spot:.2f}; buy {kp:g} put / sell {kc:g} call",
+                (
+                    f"Options net {'credit' if net >= 0 else 'debit'} "
+                    f"{abs(net):.2f} (call bid − put ask)"
+                ),
+                (
+                    f"Cost basis ~{basis:.2f}; floor {kp:g}; cap {kc:g}; "
+                    f"worst-case ~${max_loss * 100:.0f} / 100 sh"
+                ),
+            ]
+            if max_pain is not None and kp <= max_pain <= kc:
+                notes.append(f"Max pain {max_pain:g} sits inside the collar")
+
+            ideas.append(
+                _idea(
+                    symbol,
+                    expiration,
+                    "collar",
+                    "collar",
+                    f"Collar {kp:g}/{kc:g}",
+                    legs,
+                    credit=net,
+                    max_profit=max_profit,
+                    max_loss=max_loss,
+                    pop_proxy=None,
+                    edge_score=score,
+                    notes=notes,
+                    spot=spot,
+                    expected_move=em,
+                    max_pain=max_pain,
+                )
+            )
+
+    # Keep every near-zero-cost idea; cap debit collars so they don't flood the screen.
+    freeish = [
+        i
+        for i in ideas
+        if (i.get("metrics") or {}).get("credit_or_debit") is not None
+        and float((i.get("metrics") or {}).get("credit_or_debit") or 0)
+        >= -FREE_COLLAR_MAX_DEBIT
+    ]
+    debit = [i for i in ideas if i not in freeish]
+    debit.sort(
+        key=lambda x: float((x.get("metrics") or {}).get("edge_score") or 0),
+        reverse=True,
+    )
+    return freeish + debit[:20]
+
+
 def compute_breakevens(
     kind: str,
     legs: list[dict],
@@ -818,6 +1024,14 @@ def compute_breakevens(
         if ck is not None:
             out.append(_round(ck + c))
         return [x for x in out if x is not None]
+    if kind in ("collar", "free_collar"):
+        stock = next((lg for lg in legs if lg.get("right") == "stock"), None)
+        entry = _num(stock.get("mid")) if stock else None
+        if entry is None or credit_or_debit is None:
+            return []
+        # Cost basis B = spot − net options credit (credit reduces basis).
+        basis = entry - float(credit_or_debit)
+        return [_round(basis)] if basis is not None else []
     return []
 
 
@@ -867,6 +1081,22 @@ def _idea(
         },
         "disclaimer": DISCLAIMER,
     }
+
+
+def _take_ideas_for_limit(ideas: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    """
+    Apply the response limit without starving collars.
+
+    Credit/debit spreads often outscore collars, so a naive top-N drop would hide
+    the free-collar tab even when many collar ideas were generated.
+    """
+    if limit <= 0 or len(ideas) <= limit:
+        return ideas
+    collars = [i for i in ideas if i.get("family") == "collar"]
+    others = [i for i in ideas if i.get("family") != "collar"]
+    collar_slots = min(len(collars), max(16, limit // 2), limit)
+    other_slots = max(0, limit - collar_slots)
+    return others[:other_slots] + collars[:collar_slots]
 
 
 def generate_strategies(
@@ -934,7 +1164,7 @@ def generate_strategies(
             ]
             for idea in filtered:
                 annotate_earnings_risk(idea, earnings.get("days_to_earnings"))
-            payload["ideas"] = filtered[:limit]
+            payload["ideas"] = _take_ideas_for_limit(filtered, limit)
             payload["days_to_earnings"] = earnings.get("days_to_earnings")
             payload["next_earnings"] = earnings.get("next_earnings")
             payload["iv_context"] = chain.get("iv_context") or payload.get("iv_context")
@@ -971,6 +1201,7 @@ def generate_strategies(
     ideas.extend(
         _debit_verticals(symbol, exp, calls, puts, spot, em, momentum_3m)
     )
+    ideas.extend(_collars(symbol, exp, calls, puts, spot, em, max_pain))
     ideas.extend(_mispricing_flags(symbol, exp, calls, puts, spot))
     ideas.sort(key=lambda x: float(x["metrics"].get("edge_score") or 0), reverse=True)
 
@@ -1019,7 +1250,7 @@ def generate_strategies(
         )
     ]
     out = dict(payload)
-    out["ideas"] = filtered[:limit]
+    out["ideas"] = _take_ideas_for_limit(filtered, limit)
     return out
 
 

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
 import {
   CartesianGrid,
   Line,
@@ -19,6 +19,10 @@ import { sizeStrategy } from "../lib/strategySizing";
 
 const CAPITAL_KEY = "ledgerline.strategies.capital";
 
+type DetailLocationState = {
+  returnTo?: string;
+};
+
 function money(n: number | null | undefined): string {
   if (n == null || Number.isNaN(n)) return "—";
   return n.toLocaleString(undefined, {
@@ -33,7 +37,13 @@ export function StrategyDetailPage() {
   const symbol = normalizeTicker(raw ?? "");
   useSeo(`${symbol} option strategy detail`);
   const [params] = useSearchParams();
+  const location = useLocation();
   const expiration = params.get("expiration") ?? undefined;
+  const returnTo =
+    (location.state as DetailLocationState | null)?.returnTo ??
+    (expiration
+      ? `/s/${symbol}/options?expiration=${encodeURIComponent(expiration)}#strategies`
+      : `/s/${symbol}/options#strategies`);
 
   const [capitalDraft, setCapitalDraft] = useState(() => {
     try {
@@ -94,7 +104,7 @@ export function StrategyDetailPage() {
       <div className="symbol-header">
         <div>
           <p className="muted small">
-            <Link to={`/s/${symbol}/options`}>← {symbol} options</Link>
+            <Link to={returnTo}>← Back</Link>
             {" · "}
             <Link to="/strategies">Scanner</Link>
           </p>
@@ -316,28 +326,43 @@ export function StrategyDetailPage() {
                   </thead>
                   <tbody>
                     {idea.legs.map((lg, idx) => {
+                      const isStock = lg.right === "stock";
                       const gg = detail.data?.greeks?.legs?.find(
                         (x) =>
                           x.contract_symbol === lg.contract_symbol ||
                           (x.strike === lg.strike && x.right === lg.right),
                       );
                       return (
-                        <tr key={`${lg.contract_symbol ?? idx}`}>
+                        <tr key={`${lg.contract_symbol ?? lg.right ?? idx}`}>
                           <td className="mono">{lg.action}</td>
-                          <td className="mono">{lg.right}</td>
-                          <td className="mono">{fmtNum(lg.strike, 2)}</td>
+                          <td className="mono">
+                            {isStock ? "stock" : lg.right}
+                          </td>
+                          <td className="mono">
+                            {isStock
+                              ? "100 sh"
+                              : fmtNum(lg.strike, 2)}
+                          </td>
                           <td className="mono">{fmtNum(lg.mid)}</td>
                           <td className="mono">
-                            {fmtNum(lg.bid)} / {fmtNum(lg.ask)}
+                            {isStock
+                              ? "—"
+                              : `${fmtNum(lg.bid)} / ${fmtNum(lg.ask)}`}
                           </td>
                           <td className="mono">
-                            {fmtPct(lg.implied_volatility)}
+                            {isStock ? "—" : fmtPct(lg.implied_volatility)}
                           </td>
                           <td className="mono">{fmtNum(gg?.delta, 3)}</td>
-                          <td className="mono">{fmtNum(gg?.theta, 3)}</td>
-                          <td className="mono">{fmtNum(gg?.vega, 3)}</td>
+                          <td className="mono">
+                            {isStock ? "—" : fmtNum(gg?.theta, 3)}
+                          </td>
+                          <td className="mono">
+                            {isStock ? "—" : fmtNum(gg?.vega, 3)}
+                          </td>
                           <td className="mono small">
-                            {lg.contract_symbol ?? "—"}
+                            {isStock
+                              ? `Buy 100 shares @ ${fmtNum(lg.mid)}`
+                              : (lg.contract_symbol ?? "—")}
                           </td>
                         </tr>
                       );

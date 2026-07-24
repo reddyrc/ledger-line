@@ -444,6 +444,7 @@ export function useOptionStrategies(
       "option-strategies",
       symbol,
       expiration ?? null,
+      50,
       filters?.min_oi ?? null,
       filters?.min_volume ?? null,
       filters?.max_spread_pct ?? null,
@@ -453,7 +454,7 @@ export function useOptionStrategies(
         symbol,
         {
           expiration,
-          limit: 24,
+          limit: 50,
           min_oi: filters?.min_oi,
           min_volume: filters?.min_volume,
           max_spread_pct: filters?.max_spread_pct,

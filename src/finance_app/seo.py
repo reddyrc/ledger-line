@@ -106,9 +106,9 @@ def meta_for_path(path: str) -> dict[str, str]:
             "expected move context.",
         ),
         "mcap": (
-            f"Market cap delta watchlist | {SITE_NAME}",
-            "Tally signed market-cap change for a watchlist over a selected "
-            "period — end minus start, with a cumulative total.",
+            f"Market metrics delta watchlist | {SITE_NAME}",
+            "Signed change in market cap, PE, PB, and PS for a watchlist "
+            "over a selected period — end minus start.",
         ),
         "screen": (
             f"Stock screener — value & momentum filters | {SITE_NAME}",

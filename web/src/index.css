@@ -1186,7 +1186,7 @@ input {
 
 .mcap-delta-summary-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
   gap: 1rem;
   align-items: end;
 }
@@ -1276,6 +1276,36 @@ input {
   padding: 0.4rem 0.55rem;
 }
 
+.options-sticky-bar {
+  position: sticky;
+  top: 3.65rem;
+  z-index: 15;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem 1rem;
+  margin: 0 0 0.85rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.options-sticky-bar-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.45rem 0.75rem;
+  min-width: 0;
+}
+
+.options-sticky-symbol {
+  font-weight: 600;
+}
+
 .options-full-link {
   text-decoration: none;
 }
@@ -1290,7 +1320,7 @@ input {
 .options-detail {
   align-self: start;
   position: sticky;
-  top: 1rem;
+  top: 7.25rem;
 }
 
 .options-premium-chart {
@@ -1596,6 +1626,26 @@ input {
   border-left: 3px solid var(--danger);
 }
 
+.strategy-card.family-collar {
+  border-left: 3px solid color-mix(in srgb, var(--accent) 55%, var(--accent-2));
+}
+
+.collar-budget-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem 0.85rem;
+  margin: 0 0 0.85rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+}
+
+.collar-budget-row .strategy-capital-input {
+  width: 6.5rem;
+}
+
 .strategy-card-top {
   display: flex;
   justify-content: space-between;
@@ -1680,6 +1730,10 @@ input {
 
   .options-detail {
     position: static;
+  }
+
+  .options-sticky-bar {
+    top: 5.75rem;
   }
 }
 
@@ -1988,6 +2042,11 @@ input {
       "search search";
     gap: 0.45rem 0.5rem;
     padding: 0.55rem 0.7rem;
+  }
+
+  .options-sticky-bar {
+    top: 5.35rem;
+    padding: 0.45rem 0.6rem;
   }
 
   .app-shell.is-home .topbar {

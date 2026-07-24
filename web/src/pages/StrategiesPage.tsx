@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 
 import { useStrategiesScan } from "../api/hooks";
 import type { StrategyIdea } from "../types/api";
@@ -10,8 +10,18 @@ import { OPTION_TIPS } from "../lib/optionsGlossary";
 const DEFAULT_WATCHLIST =
   "SPY,QQQ,IWM,AAPL,MSFT,NVDA,AMZN,META,GOOGL,TSLA";
 const STORAGE_KEY = "ledgerline.strategies.watchlist";
+const MAX_LOSS_KEY = "ledgerline.options.collarMaxLoss";
+const NEAR_FREE_NET = -0.05;
 
-type FamilyFilter = "all" | "credit" | "debit" | "mispricing";
+type FamilyFilter = "all" | "credit" | "debit" | "collar" | "mispricing";
+
+const FAMILY_KEYS = new Set<FamilyFilter>([
+  "all",
+  "credit",
+  "debit",
+  "collar",
+  "mispricing",
+]);
 
 function parseWatchlist(raw: string): string[] {
   return raw
@@ -22,19 +32,51 @@ function parseWatchlist(raw: string): string[] {
     .slice(0, 15);
 }
 
+function parseFamily(raw: string | null): FamilyFilter {
+  if (raw && FAMILY_KEYS.has(raw as FamilyFilter)) return raw as FamilyFilter;
+  return "all";
+}
+
+function collarMaxLossDollars(idea: StrategyIdea): number | null {
+  const perShare = idea.metrics.max_loss;
+  if (perShare == null || Number.isNaN(perShare)) return null;
+  return perShare * 100;
+}
+
+function rewardRiskRatio(idea: StrategyIdea): number | null {
+  const gain = idea.metrics.max_profit;
+  const loss = idea.metrics.max_loss;
+  if (gain == null || loss == null || Number.isNaN(gain) || Number.isNaN(loss)) {
+    return null;
+  }
+  if (loss <= 0) return gain > 0 ? Number.POSITIVE_INFINITY : null;
+  return gain / loss;
+}
+
 export function StrategiesPage() {
   useSeo(
     "Options strategy screener",
-    "Scan a watchlist for credit spreads, iron condors, and covered calls with liquidity filters, POP estimates, and earnings-risk annotations.",
+    "Scan a watchlist for credit spreads, iron condors, collars, and covered-style ideas with liquidity filters and earnings-risk annotations.",
   );
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [draft, setDraft] = useState(DEFAULT_WATCHLIST);
   const [watchlist, setWatchlist] = useState<string[]>(() =>
     parseWatchlist(DEFAULT_WATCHLIST),
   );
-  const [family, setFamily] = useState<FamilyFilter>("all");
+  const [family, setFamily] = useState<FamilyFilter>(() =>
+    parseFamily(searchParams.get("family")),
+  );
   const [minOi, setMinOi] = useState("100");
   const [minVol, setMinVol] = useState("10");
   const [maxSpread, setMaxSpread] = useState("25");
+  const [maxLossDraft, setMaxLossDraft] = useState(() => {
+    try {
+      return localStorage.getItem(MAX_LOSS_KEY) ?? "";
+    } catch {
+      return "";
+    }
+  });
 
   useEffect(() => {
     try {
@@ -48,6 +90,24 @@ export function StrategiesPage() {
     }
   }, []);
 
+  useEffect(() => {
+    const fromUrl = parseFamily(searchParams.get("family"));
+    if (fromUrl !== family) setFamily(fromUrl);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  useEffect(() => {
+    try {
+      if (maxLossDraft.trim()) {
+        localStorage.setItem(MAX_LOSS_KEY, maxLossDraft.trim());
+      } else {
+        localStorage.removeItem(MAX_LOSS_KEY);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [maxLossDraft]);
+
   const liqFilters = useMemo(() => {
     const oi = Number(minOi);
     const vol = Number(minVol);
@@ -59,16 +119,58 @@ export function StrategiesPage() {
     };
   }, [minOi, minVol, maxSpread]);
 
+  const maxLossBudget = useMemo(() => {
+    const n = Number(maxLossDraft);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }, [maxLossDraft]);
+
+  const returnTo = `${location.pathname}${location.search}`;
+
   const scan = useStrategiesScan(watchlist, "nearest", liqFilters);
 
   const ideas = useMemo(() => {
     const all = scan.data?.ideas ?? [];
-    const filtered =
+    let filtered =
       family === "all" ? all : all.filter((i) => i.family === family);
-    return [...filtered].sort(
-      (a, b) => (b.metrics.edge_score ?? 0) - (a.metrics.edge_score ?? 0),
+    if (family === "collar") {
+      if (maxLossBudget != null) {
+        filtered = filtered.filter((i) => {
+          const dollars = collarMaxLossDollars(i);
+          return dollars != null && dollars <= maxLossBudget;
+        });
+      } else {
+        filtered = filtered.filter(
+          (i) =>
+            i.metrics.credit_or_debit != null &&
+            i.metrics.credit_or_debit >= NEAR_FREE_NET,
+        );
+      }
+    }
+    return [...filtered].sort((a, b) => {
+      const ra = rewardRiskRatio(a);
+      const rb = rewardRiskRatio(b);
+      if (ra == null && rb == null) {
+        return (b.metrics.edge_score ?? 0) - (a.metrics.edge_score ?? 0);
+      }
+      if (ra == null) return 1;
+      if (rb == null) return -1;
+      if (rb !== ra) return rb - ra;
+      return (b.metrics.edge_score ?? 0) - (a.metrics.edge_score ?? 0);
+    });
+  }, [scan.data?.ideas, family, maxLossBudget]);
+
+  function selectFamily(next: FamilyFilter) {
+    setFamily(next);
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        if (next === "all") p.delete("family");
+        else p.set("family", next);
+        return p;
+      },
+      { replace: true },
     );
-  }, [scan.data?.ideas, family]);
+  }
 
   function applyWatchlist() {
     const next = parseWatchlist(draft);
@@ -80,6 +182,9 @@ export function StrategiesPage() {
       /* ignore */
     }
   }
+
+  const ideaHref = (idea: StrategyIdea) =>
+    `/s/${idea.symbol}/strategies/${idea.id}?expiration=${encodeURIComponent(idea.expiration)}`;
 
   return (
     <div className="strategies-page fade-in">
@@ -115,19 +220,48 @@ export function StrategiesPage() {
           </button>
         </form>
         <div className="strategy-filters" style={{ marginTop: "0.75rem" }}>
-          {(["all", "credit", "debit", "mispricing"] as FamilyFilter[]).map(
-            (key) => (
-              <button
-                key={key}
-                type="button"
-                className={`sort-btn${family === key ? " active" : ""}`}
-                onClick={() => setFamily(key)}
-              >
-                {key}
-              </button>
-            ),
-          )}
+          {(
+            [
+              { key: "all", label: "all" },
+              { key: "credit", label: "credit" },
+              { key: "debit", label: "debit" },
+              { key: "collar", label: "collars" },
+              { key: "mispricing", label: "mispricing" },
+            ] as Array<{ key: FamilyFilter; label: string }>
+          ).map(({ key, label }) => (
+            <button
+              key={key}
+              type="button"
+              className={`sort-btn${family === key ? " active" : ""}`}
+              onClick={() => selectFamily(key)}
+            >
+              {label}
+            </button>
+          ))}
         </div>
+        {family === "collar" && (
+          <div className="collar-budget-row" style={{ marginTop: "0.75rem" }}>
+            <label className="options-exp-label" title={OPTION_TIPS.collarMaxLoss}>
+              Willing to lose ≤ $
+              <input
+                className="strategy-capital-input mono"
+                type="number"
+                min={0}
+                step={50}
+                inputMode="decimal"
+                placeholder="e.g. 500"
+                value={maxLossDraft}
+                onChange={(e) => setMaxLossDraft(e.target.value)}
+                aria-label="Maximum collar loss in dollars for 100 shares"
+              />
+            </label>
+            <span className="muted small">
+              {maxLossBudget != null
+                ? "Collars within this worst-case budget (100 sh)."
+                : "Blank = near-zero options cost only."}
+            </span>
+          </div>
+        )}
         <div className="liq-filter-row">
           <label className="options-exp-label">
             Min OI
@@ -176,7 +310,7 @@ export function StrategiesPage() {
               <thead>
                 <tr>
                   <th>Symbol</th>
-                  <th title="Strategy family: credit (sell premium), debit (buy premium), or mispricing (quote anomaly).">
+                  <th title="Strategy family: credit, debit, collar, or mispricing.">
                     Family
                   </th>
                   <th>Idea</th>
@@ -197,7 +331,8 @@ export function StrategiesPage() {
                     <td>
                       <Link
                         className="mono ticker-link"
-                        to={`/s/${idea.symbol}/strategies/${idea.id}?expiration=${encodeURIComponent(idea.expiration)}`}
+                        to={ideaHref(idea)}
+                        state={{ returnTo }}
                       >
                         {idea.symbol}
                       </Link>
@@ -206,7 +341,8 @@ export function StrategiesPage() {
                     <td>
                       <Link
                         className="ticker-link"
-                        to={`/s/${idea.symbol}/strategies/${idea.id}?expiration=${encodeURIComponent(idea.expiration)}`}
+                        to={ideaHref(idea)}
+                        state={{ returnTo }}
                       >
                         {idea.title}
                       </Link>

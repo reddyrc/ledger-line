@@ -11,11 +11,14 @@ import {
 import { DateRangeControls } from "../components/DateRangeControls";
 import {
   fmtCompact,
+  fmtNum,
   fmtPct,
   fmtSignedCompact,
+  fmtSignedNum,
   normalizeTicker,
 } from "../lib/format";
 import { useSeo } from "../lib/seo";
+import type { McapDeltaRow } from "../types/api";
 
 const DEFAULT_WATCHLIST =
   "AAPL,MSFT,NVDA,AMZN,META,GOOGL,TSLA,INTC";
@@ -30,10 +33,64 @@ function parseWatchlist(raw: string): string[] {
     .slice(0, 15);
 }
 
+function signedClass(v: number | null | undefined): string {
+  if (v == null || Number.isNaN(v) || v === 0) return "mono";
+  return v < 0 ? "mono neg" : "mono pos";
+}
+
+function RatioDeltaCell({
+  delta,
+  start,
+  end,
+}: {
+  delta: number | null;
+  start: number | null;
+  end: number | null;
+}) {
+  return (
+    <td className={signedClass(delta)}>
+      <div>{fmtSignedNum(delta)}</div>
+      {(start != null || end != null) && (
+        <div className="muted small">
+          {fmtNum(start)} → {fmtNum(end)}
+        </div>
+      )}
+    </td>
+  );
+}
+
+function RowCells({ r }: { r: McapDeltaRow }) {
+  if (r.error) {
+    return (
+      <td className="muted small" colSpan={8}>
+        {r.error}
+      </td>
+    );
+  }
+  return (
+    <>
+      <td className="mono small">{r.start_date ?? "—"}</td>
+      <td className="mono small">{r.end_date ?? "—"}</td>
+      <td className={signedClass(r.delta_mcap)}>
+        {fmtSignedCompact(r.delta_mcap)}
+      </td>
+      <td className={signedClass(r.delta_mcap_pct)}>
+        {fmtPct(r.delta_mcap_pct)}
+      </td>
+      <RatioDeltaCell delta={r.delta_pe} start={r.start_pe} end={r.end_pe} />
+      <RatioDeltaCell delta={r.delta_pb} start={r.start_pb} end={r.end_pb} />
+      <RatioDeltaCell delta={r.delta_ps} start={r.start_ps} end={r.end_ps} />
+      <td className={signedClass(r.delta_price_pct)}>
+        {fmtPct(r.delta_price_pct)}
+      </td>
+    </>
+  );
+}
+
 export function McapDeltaPage() {
   useSeo(
-    "Market cap delta",
-    "Tally signed market-cap change for a watchlist over a selected period — end minus start, with a cumulative total.",
+    "Market metrics delta",
+    "Signed change in market cap, PE, PB, and PS for a watchlist over a selected period — end minus start.",
   );
 
   const [draft, setDraft] = useState(DEFAULT_WATCHLIST);
@@ -106,10 +163,11 @@ export function McapDeltaPage() {
     <div className="mcap-delta-page fade-in">
       <div className="symbol-header">
         <div>
-          <h1 className="page-title">Market cap Δ</h1>
+          <h1 className="page-title">Market metrics Δ</h1>
           <p className="muted small">
-            Signed change in market cap (end − start) for each ticker, using
-            price × as-of EDGAR shares. Cumulative total sums the deltas.
+            Signed end − start change in market cap, PE, PB, and PS for each
+            ticker (price × as-of EDGAR fundamentals). Cumulative total sums
+            market-cap deltas; ratio averages are shown in the summary.
           </p>
         </div>
         <div className="controls">
@@ -139,7 +197,7 @@ export function McapDeltaPage() {
             className="strategy-watch-input mono"
             value={draft}
             onChange={(e) => setDraft(e.target.value.toUpperCase())}
-            aria-label="Market cap watchlist"
+            aria-label="Metrics delta watchlist"
             placeholder="AAPL, MSFT, NVDA…"
           />
           <button className="btn-secondary" type="submit" disabled={query.isFetching}>
@@ -161,15 +219,7 @@ export function McapDeltaPage() {
           <div className="mcap-delta-summary-grid">
             <div>
               <p className="muted small">Cumulative Δ market cap</p>
-              <p
-                className={`mcap-delta-total mono${
-                  (totals.delta_mcap ?? 0) < 0
-                    ? " neg"
-                    : (totals.delta_mcap ?? 0) > 0
-                      ? " pos"
-                      : ""
-                }`}
-              >
+              <p className={`mcap-delta-total ${signedClass(totals.delta_mcap)}`}>
                 {fmtSignedCompact(totals.delta_mcap)}
               </p>
             </div>
@@ -177,6 +227,24 @@ export function McapDeltaPage() {
               <p className="muted small">Sum start → end</p>
               <p className="mono">
                 {fmtCompact(totals.start_mcap)} → {fmtCompact(totals.end_mcap)}
+              </p>
+            </div>
+            <div>
+              <p className="muted small">Avg Δ PE</p>
+              <p className={signedClass(totals.avg_delta_pe)}>
+                {fmtSignedNum(totals.avg_delta_pe)}
+              </p>
+            </div>
+            <div>
+              <p className="muted small">Avg Δ PB</p>
+              <p className={signedClass(totals.avg_delta_pb)}>
+                {fmtSignedNum(totals.avg_delta_pb)}
+              </p>
+            </div>
+            <div>
+              <p className="muted small">Avg Δ PS</p>
+              <p className={signedClass(totals.avg_delta_ps)}>
+                {fmtSignedNum(totals.avg_delta_ps)}
               </p>
             </div>
             <div>
@@ -194,7 +262,7 @@ export function McapDeltaPage() {
 
       {query.isError && (
         <div className="banner error">
-          {(query.error as Error).message || "Failed to load market-cap deltas."}
+          {(query.error as Error).message || "Failed to load metric deltas."}
         </div>
       )}
 
@@ -207,10 +275,11 @@ export function McapDeltaPage() {
                   <th>Symbol</th>
                   <th>Start</th>
                   <th>End</th>
-                  <th>Start mcap</th>
-                  <th>End mcap</th>
                   <th>Δ mcap</th>
-                  <th>Δ %</th>
+                  <th>Δ mcap %</th>
+                  <th>Δ PE</th>
+                  <th>Δ PB</th>
+                  <th>Δ PS</th>
                   <th>Δ price</th>
                 </tr>
               </thead>
@@ -222,41 +291,7 @@ export function McapDeltaPage() {
                         {r.symbol}
                       </Link>
                     </td>
-                    {r.error ? (
-                      <td className="muted small" colSpan={7}>
-                        {r.error}
-                      </td>
-                    ) : (
-                      <>
-                        <td className="mono small">{r.start_date ?? "—"}</td>
-                        <td className="mono small">{r.end_date ?? "—"}</td>
-                        <td className="mono">{fmtCompact(r.start_mcap)}</td>
-                        <td className="mono">{fmtCompact(r.end_mcap)}</td>
-                        <td
-                          className={`mono${
-                            (r.delta_mcap ?? 0) < 0
-                              ? " neg"
-                              : (r.delta_mcap ?? 0) > 0
-                                ? " pos"
-                                : ""
-                          }`}
-                        >
-                          {fmtSignedCompact(r.delta_mcap)}
-                        </td>
-                        <td
-                          className={`mono${
-                            (r.delta_mcap_pct ?? 0) < 0
-                              ? " neg"
-                              : (r.delta_mcap_pct ?? 0) > 0
-                                ? " pos"
-                                : ""
-                          }`}
-                        >
-                          {fmtPct(r.delta_mcap_pct)}
-                        </td>
-                        <td className="mono">{fmtPct(r.delta_price_pct)}</td>
-                      </>
-                    )}
+                    <RowCells r={r} />
                   </tr>
                 ))}
               </tbody>

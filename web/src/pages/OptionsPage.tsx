@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
 import {
   CartesianGrid,
   Line,
@@ -64,11 +64,15 @@ function historyBounds(period: string): DateBounds {
 export function OptionsPage() {
   const { symbol: raw } = useParams();
   const symbol = normalizeTicker(raw ?? "");
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   useSeo(
     `${symbol} options chain, implied volatility & strategy ideas`,
     `${symbol} options analytics: chain by expiration, ATM IV with IV rank, expected move, max pain, unusual activity, IV vs HV history, and heuristic strategy ideas.`,
   );
-  const [expiration, setExpiration] = useState<string | undefined>(undefined);
+  const [expiration, setExpiration] = useState<string | undefined>(
+    () => searchParams.get("expiration") ?? undefined,
+  );
   const [selected, setSelected] = useState<Selected | null>(null);
   const [period, setPeriod] = useState("3mo");
   const [showStock, setShowStock] = useState(false);
@@ -77,19 +81,59 @@ export function OptionsPage() {
   const chain = useOptionsChain(symbol, expiration);
 
   useEffect(() => {
-    setExpiration(undefined);
+    const fromUrl = searchParams.get("expiration") ?? undefined;
+    setExpiration(fromUrl);
     setSelected(null);
-  }, [symbol]);
+  }, [symbol]); // eslint-disable-line react-hooks/exhaustive-deps -- reset on ticker change only
+
+  // Browser back / restored URL
+  useEffect(() => {
+    const fromUrl = searchParams.get("expiration") ?? undefined;
+    if (fromUrl !== expiration) {
+      setExpiration(fromUrl);
+    }
+  }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!expiration && chain.data?.expiration) {
       setExpiration(chain.data.expiration);
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set("expiration", chain.data!.expiration!);
+          return next;
+        },
+        { replace: true },
+      );
     }
-  }, [expiration, chain.data?.expiration]);
+  }, [expiration, chain.data?.expiration, setSearchParams]);
 
   useEffect(() => {
     setSelected(null);
   }, [expiration]);
+
+  useEffect(() => {
+    if (location.hash !== "#strategies") return;
+    const el = document.getElementById("strategies");
+    if (!el) return;
+    const t = window.setTimeout(() => {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 80);
+    return () => window.clearTimeout(t);
+  }, [location.hash, location.key, symbol, expiration]);
+
+  function selectExpiration(next: string | undefined) {
+    setExpiration(next);
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        if (next) p.set("expiration", next);
+        else p.delete("expiration");
+        return p;
+      },
+      { replace: true },
+    );
+  }
 
   const data = chain.data;
   const summary = data?.summary;
@@ -166,23 +210,32 @@ export function OptionsPage() {
             {data?.freshness ? ` · ${data.freshness}` : ""}
           </p>
         </div>
-        <div className="controls">
-          <label className="options-exp-label">
-            Expiration
-            <select
-              className="options-exp-select mono"
-              value={expiration ?? data?.expiration ?? ""}
-              onChange={(e) => setExpiration(e.target.value || undefined)}
-              disabled={!data?.expirations?.length}
-            >
-              {(data?.expirations ?? []).map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
-          </label>
+      </div>
+
+      <div className="options-sticky-bar" role="region" aria-label="Options expiration">
+        <div className="options-sticky-bar-meta">
+          <span className="mono options-sticky-symbol">{symbol}</span>
+          <span className="muted small">
+            Spot {fmtPrice(data?.spot)}
+            {data?.freshness ? ` · ${data.freshness}` : ""}
+          </span>
         </div>
+        <label className="options-exp-label">
+          Expiration
+          <select
+            className="options-exp-select mono"
+            value={expiration ?? data?.expiration ?? ""}
+            onChange={(e) => selectExpiration(e.target.value || undefined)}
+            disabled={!data?.expirations?.length}
+            aria-label="Option expiration date"
+          >
+            {(data?.expirations ?? []).map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
       {chain.isLoading && <div className="chart-skeleton skeleton-block" />}
